@@ -24,7 +24,10 @@ const dcaConfigSchema = z.object({
   }),
   recipient: addressField,
   quoteMode: z.enum(['external-quote-required', 'router-quote', 'manual-min-out']),
-  minAmountOut: z.string().regex(/^\d+(\.\d+)?$/).optional(),
+  minAmountOut: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/)
+    .optional(),
 });
 
 const aerodromeVoteConfigSchema = z.object({
@@ -32,11 +35,13 @@ const aerodromeVoteConfigSchema = z.object({
   veAeroTokenId: z.string().min(1),
   strategy: z.enum(['max-reward-density', 'risk-adjusted', 'balanced']),
   maxPools: z.number().int().min(1),
-  executionWindow: z.object({
-    day: z.enum(['wednesday', 'thursday']),
-    startUtcHour: z.number().int().min(0).max(23),
-    endUtcHour: z.number().int().min(0).max(23),
-  }).optional(),
+  executionWindow: z
+    .object({
+      day: z.enum(['wednesday', 'thursday']),
+      startUtcHour: z.number().int().min(0).max(23),
+      endUtcHour: z.number().int().min(0).max(23),
+    })
+    .optional(),
   allowAiExplanation: z.boolean(),
 });
 
@@ -66,18 +71,26 @@ export const submitPermissionGrantSchema = z.object({
   rawGrantResponse: z.unknown(),
   context: hexField.optional(),
   delegationManager: addressField.optional(),
-  dependencies: z.array(z.object({
-    factory: addressField.optional(),
-    factoryData: hexField.optional(),
-  })).optional(),
+  dependencies: z
+    .array(
+      z.object({
+        factory: addressField.optional(),
+        factoryData: hexField.optional(),
+      }),
+    )
+    .optional(),
   expiresAt: z.string().datetime().optional(),
-  normalizedPermissions: z.array(z.object({
-    chainId: z.union([z.string(), z.number()]),
-    from: addressField,
-    to: addressField.optional(),
-    permissionType: z.string(),
-    data: z.record(z.string(), z.unknown()).optional(),
-  })).optional(),
+  normalizedPermissions: z
+    .array(
+      z.object({
+        chainId: z.union([z.string(), z.number()]),
+        from: addressField,
+        to: addressField.optional(),
+        permissionType: z.string(),
+        data: z.record(z.string(), z.unknown()).optional(),
+      }),
+    )
+    .optional(),
 });
 
 export type SubmitPermissionGrantDto = z.infer<typeof submitPermissionGrantSchema>;

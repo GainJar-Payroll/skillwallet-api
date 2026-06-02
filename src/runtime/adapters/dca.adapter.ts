@@ -1,9 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { SkillAdapter, AdapterContext, CheckTriggerResult, BuildActionResult } from './skill-adapter.interface';
+import {
+  SkillAdapter,
+  AdapterContext,
+  CheckTriggerResult,
+  BuildActionResult,
+} from './skill-adapter.interface';
 import { ProposedAction } from '../schemas/execution-attempt.schema';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
-import { nextRunFromFrequency, now as nowFn } from '../../common/utils/time';
+import { nextRunFromFrequency } from '../../common/utils/time';
 
 interface DcaConfig {
   type: 'dca';
@@ -28,13 +33,22 @@ export class DcaAdapter implements SkillAdapter {
     }
     const c = config as Partial<DcaConfig>;
     if (c.type !== 'dca') {
-      throw new AppError(ErrorCode.VALIDATION_ERROR, `DCA config type must be "dca", got "${c.type}"`);
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        `DCA config type must be "dca", got "${c.type}"`,
+      );
     }
     if (!c.tokenIn?.address || !c.tokenOut?.address) {
-      throw new AppError(ErrorCode.VALIDATION_ERROR, 'DCA config requires tokenIn.address and tokenOut.address');
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        'DCA config requires tokenIn.address and tokenOut.address',
+      );
     }
     if (!c.amountPerRun || !/^\d+(\.\d+)?$/.test(c.amountPerRun)) {
-      throw new AppError(ErrorCode.VALIDATION_ERROR, 'DCA config amountPerRun must be a decimal string');
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        'DCA config amountPerRun must be a decimal string',
+      );
     }
     if (!c.router?.address) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, 'DCA config requires router.address');
@@ -46,11 +60,17 @@ export class DcaAdapter implements SkillAdapter {
       throw new AppError(ErrorCode.VALIDATION_ERROR, 'DCA config maxSlippageBps must be 1-500');
     }
     if (c.quoteMode === 'manual-min-out' && !c.minAmountOut) {
-      throw new AppError(ErrorCode.VALIDATION_ERROR, 'DCA config quoteMode=manual-min-out requires minAmountOut');
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        'DCA config quoteMode=manual-min-out requires minAmountOut',
+      );
     }
   }
 
-  getNextRun(installation: { schedule?: { nextRunAt?: Date | null; frequency?: string } }, now: Date): Date | null {
+  getNextRun(
+    installation: { schedule?: { nextRunAt?: Date | null; frequency?: string } },
+    now: Date,
+  ): Date | null {
     const freq = installation.schedule?.frequency as 'daily' | 'weekly' | 'monthly' | undefined;
     if (!freq) return null;
     return nextRunFromFrequency(now, freq);
@@ -73,10 +93,16 @@ export class DcaAdapter implements SkillAdapter {
   async buildAction(ctx: AdapterContext): Promise<BuildActionResult> {
     const config = ctx.installation.config as unknown as DcaConfig;
     if (!config.router?.address) {
-      throw new AppError(ErrorCode.ACTION_BUILD_NOT_CONFIGURED, 'DCA router address not configured');
+      throw new AppError(
+        ErrorCode.ACTION_BUILD_NOT_CONFIGURED,
+        'DCA router address not configured',
+      );
     }
     if (config.quoteMode === 'manual-min-out' && !config.minAmountOut) {
-      throw new AppError(ErrorCode.ACTION_BUILD_NOT_CONFIGURED, 'DCA manual-min-out requires minAmountOut from external quote');
+      throw new AppError(
+        ErrorCode.ACTION_BUILD_NOT_CONFIGURED,
+        'DCA manual-min-out requires minAmountOut from external quote',
+      );
     }
 
     throw new AppError(

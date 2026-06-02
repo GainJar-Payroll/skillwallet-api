@@ -6,9 +6,7 @@ import { ExecutorsController } from './executors.controller';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: ExecutorRegistry.name, schema: ExecutorRegistrySchema },
-    ]),
+    MongooseModule.forFeature([{ name: ExecutorRegistry.name, schema: ExecutorRegistrySchema }]),
   ],
   providers: [ExecutorsService],
   controllers: [ExecutorsController],

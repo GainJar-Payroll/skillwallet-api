@@ -175,7 +175,10 @@ export class PermissionCompilerService {
     const manifestId = `manifest_${uuidv4()}`;
     const manifest = { ...manifestBase, manifestId };
 
-    const amountPerRunBaseUnits = this.toBaseUnits(input.config.amountPerRun, input.config.tokenIn.decimals);
+    const amountPerRunBaseUnits = this.toBaseUnits(
+      input.config.amountPerRun,
+      input.config.tokenIn.decimals,
+    );
     const requestId = `req_${uuidv4()}`;
     const chainIdHex = this.toChainIdHex(input.chainId);
     const expiry = unixSeconds(validUntil);

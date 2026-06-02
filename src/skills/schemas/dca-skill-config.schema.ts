@@ -1,4 +1,4 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Prop, SchemaFactory } from '@nestjs/mongoose';
 
 export class DcaSkillConfig {
   @Prop({ required: true, default: 'dca' }) type!: string;
@@ -14,7 +14,8 @@ export class DcaSkillConfig {
   @Prop({ required: true }) routerName!: 'uniswap' | 'aerodrome' | 'custom';
   @Prop({ required: true }) routerAddress!: string;
   @Prop({ required: true }) recipient!: string;
-  @Prop({ required: true, enum: ['external-quote-required', 'router-quote', 'manual-min-out'] }) quoteMode!: string;
+  @Prop({ required: true, enum: ['external-quote-required', 'router-quote', 'manual-min-out'] })
+  quoteMode!: string;
   @Prop({ required: false }) minAmountOut?: string;
 }
 

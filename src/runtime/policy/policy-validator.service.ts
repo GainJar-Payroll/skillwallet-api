@@ -1,13 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { ProposedAction } from '../schemas/execution-attempt.schema';
-import { Enforcement, PolicyManifest, PolicyRule, PolicyValidationResult, CheckedRule } from './policy-types';
-import { AppError } from '../../common/errors/app-error';
-import { ErrorCode } from '../../common/errors/error-codes';
+import { PolicyManifest, PolicyRule, PolicyValidationResult, CheckedRule } from './policy-types';
 import { SkillInstallation } from '../../installations/schemas/skill-installation.schema';
 
 @Injectable()
 export class PolicyValidatorService {
-  validate(installation: SkillInstallation, action: ProposedAction, manifest: PolicyManifest): PolicyValidationResult {
+  validate(
+    installation: SkillInstallation,
+    action: ProposedAction,
+    manifest: PolicyManifest,
+  ): PolicyValidationResult {
     const checkedRules: CheckedRule[] = [];
     const warnings: string[] = [];
 
@@ -61,11 +63,15 @@ export class PolicyValidatorService {
     if (manifest.allowedSelectors.length > 0) {
       const selectorMatch = action.calldata.toLowerCase().startsWith(action.selector.toLowerCase());
       if (selectorMatch) {
-        const allowed = manifest.allowedSelectors.some((s) => s.toLowerCase() === action.selector.toLowerCase());
+        const allowed = manifest.allowedSelectors.some(
+          (s) => s.toLowerCase() === action.selector.toLowerCase(),
+        );
         checkedRules.push({
           ruleId: 'rule.allowed-selector',
           ok: allowed,
-          message: allowed ? 'Selector is allowed' : `Selector ${action.selector} not in allowedSelectors`,
+          message: allowed
+            ? 'Selector is allowed'
+            : `Selector ${action.selector} not in allowedSelectors`,
           enforcement: 'backend-policy',
         });
         if (!allowed) {
@@ -96,7 +102,10 @@ export class PolicyValidatorService {
         });
         return { ok: false, blockedReason: 'approve spender missing', checkedRules };
       }
-      if (amount === 'unlimited' || amount === '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff') {
+      if (
+        amount === 'unlimited' ||
+        amount === '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+      ) {
         checkedRules.push({
           ruleId: 'rule.no-unlimited-approval',
           ok: false,
@@ -121,7 +130,11 @@ export class PolicyValidatorService {
     return { ok: true, checkedRules, warnings: warnings.length > 0 ? warnings : undefined };
   }
 
-  private checkRule(rule: PolicyRule, action: ProposedAction, installation: SkillInstallation): CheckedRule {
+  private checkRule(
+    rule: PolicyRule,
+    action: ProposedAction,
+    _installation: SkillInstallation,
+  ): CheckedRule {
     const base = { ruleId: rule.id, enforcement: rule.enforcement } as const;
 
     switch (rule.kind) {
@@ -132,7 +145,11 @@ export class PolicyValidatorService {
           return { ...base, ok: false, message: 'Action missing tokenIn' };
         }
         const ok = expected === actual;
-        return { ...base, ok, message: ok ? 'tokenIn matches' : `tokenIn ${actual} != expected ${expected}` };
+        return {
+          ...base,
+          ok,
+          message: ok ? 'tokenIn matches' : `tokenIn ${actual} != expected ${expected}`,
+        };
       }
       case 'fixed-token-out': {
         const expected = (rule.data.token as string | undefined)?.toLowerCase();
@@ -141,7 +158,11 @@ export class PolicyValidatorService {
           return { ...base, ok: false, message: 'Action missing tokenOut' };
         }
         const ok = expected === actual;
-        return { ...base, ok, message: ok ? 'tokenOut matches' : `tokenOut ${actual} != expected ${expected}` };
+        return {
+          ...base,
+          ok,
+          message: ok ? 'tokenOut matches' : `tokenOut ${actual} != expected ${expected}`,
+        };
       }
       case 'fixed-recipient': {
         const expected = (rule.data.recipient as string | undefined)?.toLowerCase();
@@ -150,12 +171,20 @@ export class PolicyValidatorService {
           return { ...base, ok: false, message: 'Action missing recipient' };
         }
         const ok = expected === actual;
-        return { ...base, ok, message: ok ? 'recipient matches' : `recipient ${actual} != expected ${expected}` };
+        return {
+          ...base,
+          ok,
+          message: ok ? 'recipient matches' : `recipient ${actual} != expected ${expected}`,
+        };
       }
       case 'max-slippage': {
         const maxBps = rule.data.maxSlippageBps as number;
         if (!action.decoded.minAmountOut || !action.decoded.amountIn) {
-          return { ...base, ok: false, message: 'Cannot check slippage without amountIn/minAmountOut' };
+          return {
+            ...base,
+            ok: false,
+            message: 'Cannot check slippage without amountIn/minAmountOut',
+          };
         }
         return { ...base, ok: true, message: `maxSlippageBps=${maxBps} constraint present` };
       }
@@ -166,10 +195,20 @@ export class PolicyValidatorService {
           return { ...base, ok: false, message: 'Rule missing periodAmount' };
         }
         const ok = actual ? BigInt(actual) <= BigInt(this.toBaseUnits(periodAmount, 6)) : false;
-        return { ...base, ok, message: ok ? 'amountIn within period cap' : `amountIn ${actual} exceeds period cap ${periodAmount}` };
+        return {
+          ...base,
+          ok,
+          message: ok
+            ? 'amountIn within period cap'
+            : `amountIn ${actual} exceeds period cap ${periodAmount}`,
+        };
       }
       case 'no-unlimited-approval': {
-        if (action.decoded.actionType === 'approve' && (action.value === 'unlimited' || (action.value && BigInt(action.value) > BigInt('1000000000000000000000000000')))) {
+        if (
+          action.decoded.actionType === 'approve' &&
+          (action.value === 'unlimited' ||
+            (action.value && BigInt(action.value) > BigInt('1000000000000000000000000000')))
+        ) {
           return { ...base, ok: false, message: 'Unlimited approval blocked' };
         }
         return { ...base, ok: true, message: 'No unlimited approval' };
@@ -177,10 +216,18 @@ export class PolicyValidatorService {
       case 'allowed-target': {
         const expected = (rule.data.target as string | undefined)?.toLowerCase();
         const ok = expected === action.target.toLowerCase();
-        return { ...base, ok, message: ok ? 'target allowed' : `target ${action.target} not allowed` };
+        return {
+          ...base,
+          ok,
+          message: ok ? 'target allowed' : `target ${action.target} not allowed`,
+        };
       }
       default:
-        return { ...base, ok: true, message: `Rule ${rule.kind} acknowledged (not enforced server-side)` };
+        return {
+          ...base,
+          ok: true,
+          message: `Rule ${rule.kind} acknowledged (not enforced server-side)`,
+        };
     }
   }
 

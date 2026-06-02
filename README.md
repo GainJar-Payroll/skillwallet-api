@@ -30,8 +30,8 @@ NestJS backend for a MetaMask-native wallet skill marketplace. Users install "sk
                                         ▼
               ┌─────────────────────────────────────────────────┐
               │         1Shot Relayer (gas-abstracted)           │
-              │  current: REST/Bearer placeholder (v1)          │
-              │  v2:       real JSON-RPC + Ed25519 webhooks     │
+              │  JSON-RPC 2.0 over HTTPS (permissionless)       │
+              │  Ed25519-signed webhooks, JWKS-verified         │
               └─────────────────────────────────────────────────┘
 ```
 
@@ -97,9 +97,12 @@ bun run test        # bun test — 50 tests
 | `BASE_USDC_ADDRESS` | no | used by built-in DCA skill |
 | `BASE_WETH_ADDRESS` | no | used by built-in DCA skill |
 | `BASE_SWAP_ROUTER_ADDRESS` | no | DEX router for DCA |
-| `ONESHOT_BASE_URL` | no | mandatory, no enable flag — see [1Shot section](#1shot-relayer) |
-| `ONESHOT_API_KEY` | no | mandatory |
-| `ONESHOT_WEBHOOK_SECRET` | no | HMAC secret for v1 webhooks |
+| `ONESHOT_NETWORK` | no | `mainnet` \| `testnet` (default `testnet`). Derives relayer URL. |
+| `ONESHOT_RELAYER_URL` | no | Optional override for the relayer URL |
+| `ONESHOT_PAYMENT_TOKEN_ADDRESS` | no | ERC-20 token used to pay 1Shot fees (USDC by default) |
+| `ONESHOT_DESTINATION_URL` | no | Webhook URL 1Shot POSTs status updates to |
+| `ONESHOT_JWKS_URL` | no | JWKS endpoint for Ed25519 webhook signature verification |
+| `ONESHOT_WEBHOOK_PUBLIC_KEY` | no | Fallback Ed25519 public key (JWK JSON or base64 raw 32 bytes) |
 
 > **Boot behavior:** Missing `MONGODB_URI` → crash. Missing `ONESHOT_*` or `BASE_EXECUTOR_ADDRESS` → permissive boot, but the affected endpoint returns typed `NOT_CONFIGURED` when called.
 
@@ -286,35 +289,106 @@ The MetaMask Snap is the **signing surface** for ERC-7715 permissions and the **
 
 ## 1Shot Relayer
 
-**Current status (v1, shipped):** REST + Bearer auth + HMAC-SHA256 webhooks. This is a **placeholder** that matches the shape we expect to migrate from. It does NOT match the real 1Shot JSON-RPC API. Do not point `ONESHOT_BASE_URL` at `https://relayer.1shotapi.com/relayers` until the v2 refactor ships.
+The backend talks to 1Shot v2 — a **permissionless JSON-RPC API** (no API key, no HMAC). The service is always wired; if `ONESHOT_PAYMENT_TOKEN_ADDRESS` or `ONESHOT_DESTINATION_URL` is missing, the affected endpoint returns typed `NOT_CONFIGURED`.
 
-**v2 roadmap (deferred TODO):**
-- 9 JSON-RPC methods (no auth header, permissionless):
-  - `relayer_getCapabilities`
-  - `relayer_getFeeData`
-  - `relayer_estimate7710Transaction[Multichain]`
-  - `relayer_send7710Transaction[Multichain]`
-  - `relayer_sendTransaction[Multichain]`
-  - `relayer_getStatus`
-- EIP-7710 bundle shape: `{ chainId, transactions: [{ permissionContext, executions }], authorizationList, context, taskId, destinationUrl }`
-- Ed25519-signed webhooks, verified against JWKS (replace HMAC verifier)
-- Status codes: 100=Pending, 110=Submitted, 200=Confirmed, 400=Rejected, 500=Reverted
-- Mainnet: `https://relayer.1shotapi.com/relayers`
-- Testnet: `https://relayer.1shotapi.dev/relayers`
+**Network selection.** `ONESHOT_NETWORK` is `mainnet` or `testnet` (default `testnet`). The relayer URL is derived from this:
 
-**Mandatory in this project:** 1Shot is the only supported relayer. The service is always wired. If config is missing, the app boots permissively but `relayDelegatedExecution` returns `NOT_CONFIGURED` with a clear message.
+| Network | URL |
+|---|---|
+| `mainnet` | `https://relayer.1shotapi.com/relayers` |
+| `testnet` | `https://relayer.1shotapi.dev/relayers` |
+
+Override with `ONESHOT_RELAYER_URL` if you need to point at a custom deployment.
+
+**JSON-RPC methods (1:1 wire mapping).** All requests are `POST {relayerUrl}/rpc` with a standard JSON-RPC 2.0 envelope.
+
+| Method | Purpose |
+|---|---|
+| `relayer_getCapabilities` | Discover supported networks / methods / features |
+| `relayer_getFeeData` | Estimate fee (paymentToken + requiredPaymentAmount + gas) for a bundle |
+| `relayer_estimate7710Transaction` | Estimate outcome of an EIP-7710 bundle (single chain) |
+| `relayer_estimate7710TransactionMultichain` | Same, multichain |
+| `relayer_send7710Transaction` | Submit an EIP-7710 bundle (single chain) |
+| `relayer_send7710TransactionMultichain` | Same, multichain |
+| `relayer_sendTransaction` | Submit a raw tx (no delegation) |
+| `relayer_sendTransactionMultichain` | Same, multichain |
+| `relayer_getStatus` | Poll task status by `taskId` |
+
+**EIP-7710 bundle shape (single-chain).** The runner builds this and calls `relayer_send7710Transaction`:
+
+```jsonc
+{
+  "chainId": 8453,
+  "transactions": [
+    {
+      "permissionContext": "0x…",
+      "executions": [{ "target": "0x…", "callData": "0x…", "value": "0x0" }]
+    }
+  ],
+  "authorizationList": [/* EIP-7702 */],
+  "context": "0x…",
+  "taskId": "uuid",
+  "destinationUrl": "https://your-host/webhooks/oneshot"
+}
+```
+
+**Status codes** (numeric, returned by 1Shot + on the webhook):
+
+| Code | Name | Meaning |
+|---|---|---|
+| 100 | pending | accepted, not yet on-chain |
+| 110 | submitted | tx broadcast |
+| 200 | confirmed | tx mined |
+| 400 | rejected | pre-chain validation failed |
+| 500 | reverted | tx reverted on-chain |
+
+**Error codes** (EIP-1193-shaped, returned in JSON-RPC `error.code`):
+
+| Code | Mapped to `AppError` | Meaning |
+|---|---|---|
+| 4200 | `VALIDATION_ERROR` | invalid params |
+| 4202 | `NOT_FOUND` | resource not found (e.g. unknown taskId) |
+| 4204 | `RELAYER_ERROR` | request rejected |
+| 4210 | `RELAYER_ERROR` | user rejected |
+| 4211 | `RELAYER_ERROR` | insufficient funds |
+
+**Webhooks.** 1Shot POSTs `POST /webhooks/oneshot` with an Ed25519-signed body. The verifier resolves the public key from one of two sources (in order):
+
+1. **JWKS** at `ONESHOT_JWKS_URL` (preferred) — cached for 1 hour, keys looked up by `key-id` header.
+2. **Static fallback** `ONESHOT_WEBHOOK_PUBLIC_KEY` — a JWK JSON object or a base64-encoded 32-byte raw Ed25519 public key.
+
+The controller verifies the signature over the **raw request body** (captured in `main.ts` via the express `verify` hook), looks up the matching `ExecutionAttempt` by `relay.taskId`, and patches `statusCode` / `txHash` / `errorCode` / `errorMessage` in place.
+
+**`RelayRecord` (v2).** Embedded on every `ExecutionAttempt` that submitted a bundle:
+
+```ts
+{
+  provider: '1shot',
+  taskId: '…',
+  statusCode: 100 | 110 | 200 | 400 | 500,
+  status: 'pending' | 'submitted' | 'confirmed' | 'rejected' | 'reverted',
+  targetAddress: '0x…',        // smart account or DelegationManager
+  paymentToken: '0x…',         // USDC on the relevant chain
+  requiredPaymentAmount: '…',   // atomic units, base-10 string
+  context: '0x…',              // opaque 1Shot context
+  txHash?: '0x…',
+  errorCode?: 4200 | 4202 | 4204 | 4210 | 4211,
+  errorMessage?: '…',
+  externalStatusUrl?: '…'
+}
+```
+
+**`POST /webhooks/oneshot` is the only way the relayer pushes back.** Until the webhook lands, the runner can still poll `relayer_getStatus` via `getRelayStatus(taskId)`.
 
 ---
 
 ## Current Limitations
 
-1. **No executor key custody** — The backend never holds executor private keys. The executor signs UserOps externally (out of scope for v1). Backend only stores the delegation and the unsigned `relayPayload`.
-2. **1Shot v1 is a placeholder** — real JSON-RPC integration is deferred (see [1Shot section](#1shot-relayer)).
-3. **No rate limiting** — guard planned but not wired.
-4. **No multi-tenant isolation** — single deployment, single DB.
-5. **Built-in skills are 2** — DCA (live), Aerodrome Vote (adapter-ready, not yet enabled for installation). Adding more is just appending to `builtInSkills`.
-6. **No webhook receiver endpoint** — v1 verifies signatures, but the controller is not yet wired. v2 will add `POST /webhooks/oneshot`.
-7. **No retry/backoff for relayer failures** — the runner records the failure and schedules the next attempt; a dead-letter queue is planned.
+1. **No executor key custody** — The backend never holds executor private keys. The executor signs UserOps externally (out of scope). Backend only stores the delegation and the unsigned `relayPayload`.
+2. **No rate limiting** — guard planned but not wired.
+3. **No multi-tenant isolation** — single deployment, single DB.
+4. **Built-in skills are 2** — DCA (live), Aerodrome Vote (adapter-ready, not yet enabled for installation). Adding more is just appending to `builtInSkills`.
+5. **No retry/backoff for relayer failures** — the runner records the failure and schedules the next attempt; a dead-letter queue is planned.
 
 ---
 

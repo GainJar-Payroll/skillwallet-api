@@ -3,12 +3,16 @@
   "private": true,
   "scripts": {
     "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
     "build": "nest build",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --max-warnings=0",
     "test": "bun test"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.21",
+    "@swc/cli": "^0.8.1",
+    "@swc/core": "^1.15.40",
     "@types/bun": "latest",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
@@ -35,5 +39,8 @@
     "uuid": "^14.0.0",
     "viem": "^2.52.0",
     "zod": "^4.4.3"
-  }
+  },
+  "trustedDependencies": [
+    "@swc/core"
+  ]
 }

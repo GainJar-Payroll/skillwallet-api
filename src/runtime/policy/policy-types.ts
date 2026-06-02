@@ -1,8 +1,4 @@
-export type Enforcement =
-  | 'wallet-permission'
-  | 'onchain-caveat'
-  | 'backend-policy'
-  | 'ui-warning';
+export type Enforcement = 'wallet-permission' | 'onchain-caveat' | 'backend-policy' | 'ui-warning';
 
 export type PermissionRuleSource = 'erc7715' | 'erc7710' | 'skillwallet';
 

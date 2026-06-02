@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 const optionalUrl = z.string().url().optional().or(z.literal(''));
-const optionalAddress = z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional().or(z.literal(''));
+const optionalAddress = z
+  .string()
+  .regex(/^0x[a-fA-F0-9]{40}$/)
+  .optional()
+  .or(z.literal(''));
 
 export const envSchema = z.object({
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
@@ -19,9 +23,12 @@ export const envSchema = z.object({
   BASE_USDC_ADDRESS: optionalAddress,
   BASE_WETH_ADDRESS: optionalAddress,
   BASE_SWAP_ROUTER_ADDRESS: optionalAddress,
-  ONESHOT_BASE_URL: optionalUrl,
-  ONESHOT_API_KEY: z.string().optional().or(z.literal('')),
-  ONESHOT_WEBHOOK_SECRET: z.string().optional().or(z.literal('')),
+  ONESHOT_NETWORK: z.enum(['mainnet', 'testnet']).default('testnet'),
+  ONESHOT_RELAYER_URL: optionalUrl,
+  ONESHOT_PAYMENT_TOKEN_ADDRESS: optionalAddress,
+  ONESHOT_DESTINATION_URL: optionalUrl,
+  ONESHOT_JWKS_URL: optionalUrl,
+  ONESHOT_WEBHOOK_PUBLIC_KEY: z.string().optional().or(z.literal('')),
 });
 
 export type Env = z.infer<typeof envSchema>;

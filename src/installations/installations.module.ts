@@ -6,9 +6,7 @@ import { InstallationsController } from './installations.controller';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: SkillInstallation.name, schema: SkillInstallationSchema },
-    ]),
+    MongooseModule.forFeature([{ name: SkillInstallation.name, schema: SkillInstallationSchema }]),
   ],
   providers: [InstallationsService],
   controllers: [InstallationsController],

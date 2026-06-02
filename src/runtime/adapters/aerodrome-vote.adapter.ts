@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { SkillAdapter, AdapterContext, CheckTriggerResult, BuildActionResult } from './skill-adapter.interface';
+import {
+  SkillAdapter,
+  AdapterContext,
+  CheckTriggerResult,
+  BuildActionResult,
+} from './skill-adapter.interface';
 import { ProposedAction } from '../schemas/execution-attempt.schema';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
@@ -12,9 +17,17 @@ export class AerodromeVoteAdapter implements SkillAdapter {
     if (!config || typeof config !== 'object') {
       throw new AppError(ErrorCode.VALIDATION_ERROR, 'Aerodrome config must be an object');
     }
-    const c = config as { type?: string; veAeroTokenId?: string; strategy?: string; maxPools?: number };
+    const c = config as {
+      type?: string;
+      veAeroTokenId?: string;
+      strategy?: string;
+      maxPools?: number;
+    };
     if (c.type !== 'aerodrome-vote') {
-      throw new AppError(ErrorCode.VALIDATION_ERROR, `Aerodrome config type must be "aerodrome-vote"`);
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        `Aerodrome config type must be "aerodrome-vote"`,
+      );
     }
     if (!c.veAeroTokenId) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, 'Aerodrome config requires veAeroTokenId');

@@ -11,8 +11,14 @@ const pricingOptionSchema = z.object({
 const pricingModelSchema = z.object({
   type: z.enum(['fixed-duration', 'per-execution', 'budget-based']),
   options: z.array(pricingOptionSchema).optional(),
-  perExecutionUsdc: z.string().regex(/^\d+(\.\d+)?$/).optional(),
-  budgetUsdc: z.string().regex(/^\d+(\.\d+)?$/).optional(),
+  perExecutionUsdc: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/)
+    .optional(),
+  budgetUsdc: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/)
+    .optional(),
   budgetPeriodDays: z.number().int().positive().optional(),
 });
 

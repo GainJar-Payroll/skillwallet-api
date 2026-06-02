@@ -27,7 +27,9 @@ export class SchedulerService {
         processed++;
       } catch (err) {
         failed++;
-        this.logger.error(`Failed to run installation ${inst.installationId}: ${(err as Error).message}`);
+        this.logger.error(
+          `Failed to run installation ${inst.installationId}: ${(err as Error).message}`,
+        );
         await this.activity.log({
           installationId: inst.installationId,
           userAddress: inst.userAddress,

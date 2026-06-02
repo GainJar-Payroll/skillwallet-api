@@ -1,8 +1,14 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PermissionManifest, PermissionManifestSchema } from './schemas/permission-manifest.schema';
-import { WalletPermissionRequestRecord, WalletPermissionRequestSchema } from './schemas/wallet-permission-request.schema';
-import { WalletPermissionGrantRecord, WalletPermissionGrantSchema } from './schemas/wallet-permission-grant.schema';
+import {
+  WalletPermissionRequestRecord,
+  WalletPermissionRequestSchema,
+} from './schemas/wallet-permission-request.schema';
+import {
+  WalletPermissionGrantRecord,
+  WalletPermissionGrantSchema,
+} from './schemas/wallet-permission-grant.schema';
 import { DelegationRecord, DelegationRecordSchema } from './schemas/delegation-record.schema';
 import { PermissionCompilerService } from './permission-compiler.service';
 import { PermissionsService } from './permissions.service';

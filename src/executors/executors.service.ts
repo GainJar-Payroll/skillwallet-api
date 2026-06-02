@@ -56,7 +56,8 @@ export class ExecutorsService {
       throw new AppError(ErrorCode.NOT_FOUND, `Executor not found: ${id}`);
     }
     if (input.status) exec.status = input.status;
-    if (input.delegationManagerAddress) exec.delegationManagerAddress = input.delegationManagerAddress;
+    if (input.delegationManagerAddress)
+      exec.delegationManagerAddress = input.delegationManagerAddress;
     if (input.metadata) exec.metadata = { ...exec.metadata, ...input.metadata };
     await exec.save();
     return exec.toObject();

@@ -3,7 +3,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { SkillInstallation, SkillInstallationDocument } from './schemas/skill-installation.schema';
-import { CreateInstallationDto, ListInstallationsQuery, UpdateInstallationStatusDto } from './dto/create-installation.dto';
+import {
+  CreateInstallationDto,
+  ListInstallationsQuery,
+  UpdateInstallationStatusDto,
+} from './dto/create-installation.dto';
 import { AppError } from '../common/errors/app-error';
 import { ErrorCode } from '../common/errors/error-codes';
 import { normalizeAddress } from '../common/utils/address';
@@ -41,7 +45,11 @@ export class InstallationsService {
     return installation;
   }
 
-  async createDraft(input: CreateInstallationDto, executorAddress: string, permissionManifest: Record<string, unknown>): Promise<SkillInstallation> {
+  async createDraft(
+    input: CreateInstallationDto,
+    executorAddress: string,
+    permissionManifest: Record<string, unknown>,
+  ): Promise<SkillInstallation> {
     const installationId = `inst_${uuidv4()}`;
     const now = new Date();
     const expiresAt = addDays(now, input.pricingPlan.durationDays);
@@ -79,7 +87,10 @@ export class InstallationsService {
     return doc.toObject();
   }
 
-  async updateStatus(installationId: string, input: UpdateInstallationStatusDto): Promise<SkillInstallation> {
+  async updateStatus(
+    installationId: string,
+    input: UpdateInstallationStatusDto,
+  ): Promise<SkillInstallation> {
     const installation = await this.installationModel.findOne({ installationId });
     if (!installation) {
       throw new AppError(ErrorCode.NOT_FOUND, `Installation not found: ${installationId}`);
@@ -101,11 +112,21 @@ export class InstallationsService {
     return this.updateStatus(installationId, { status: 'revoked' });
   }
 
-  async setPermissionRequest(installationId: string, request: Record<string, unknown>): Promise<void> {
-    await this.installationModel.updateOne({ installationId }, { $set: { walletPermissionRequest: request } });
+  async setPermissionRequest(
+    installationId: string,
+    request: Record<string, unknown>,
+  ): Promise<void> {
+    await this.installationModel.updateOne(
+      { installationId },
+      { $set: { walletPermissionRequest: request } },
+    );
   }
 
-  async setPermissionGrant(installationId: string, grant: Record<string, unknown>, delegation?: Record<string, unknown>): Promise<void> {
+  async setPermissionGrant(
+    installationId: string,
+    grant: Record<string, unknown>,
+    delegation?: Record<string, unknown>,
+  ): Promise<void> {
     const update: Record<string, unknown> = { walletPermissionGrant: grant };
     if (delegation) {
       update.delegation = delegation;
@@ -115,7 +136,10 @@ export class InstallationsService {
 
   async lockInstallation(installationId: string, lockReason: string): Promise<boolean> {
     const result = await this.installationModel.updateOne(
-      { installationId, $or: [{ 'runtime.lockedAt': null }, { 'runtime.lockedAt': { $exists: false } }] },
+      {
+        installationId,
+        $or: [{ 'runtime.lockedAt': null }, { 'runtime.lockedAt': { $exists: false } }],
+      },
       { $set: { 'runtime.lockedAt': new Date(), 'runtime.lockReason': lockReason } },
     );
     return result.modifiedCount > 0;
@@ -138,7 +162,11 @@ export class InstallationsService {
     );
   }
 
-  async updateNextRunAt(installationId: string, nextRunAt: Date | null, lastRunAt?: Date): Promise<void> {
+  async updateNextRunAt(
+    installationId: string,
+    nextRunAt: Date | null,
+    lastRunAt?: Date,
+  ): Promise<void> {
     const update: Record<string, unknown> = { 'schedule.nextRunAt': nextRunAt };
     if (lastRunAt) {
       update['schedule.lastRunAt'] = lastRunAt;

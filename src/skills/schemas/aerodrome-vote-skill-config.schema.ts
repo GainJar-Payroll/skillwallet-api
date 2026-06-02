@@ -1,9 +1,10 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Prop, SchemaFactory } from '@nestjs/mongoose';
 
 export class AerodromeVoteSkillConfig {
   @Prop({ required: true, default: 'aerodrome-vote' }) type!: string;
   @Prop({ required: true }) veAeroTokenId!: string;
-  @Prop({ required: true, enum: ['max-reward-density', 'risk-adjusted', 'balanced'] }) strategy!: string;
+  @Prop({ required: true, enum: ['max-reward-density', 'risk-adjusted', 'balanced'] })
+  strategy!: string;
   @Prop({ required: true, min: 1 }) maxPools!: number;
   @Prop() executionWindow?: {
     day: 'wednesday' | 'thursday';
@@ -13,4 +14,5 @@ export class AerodromeVoteSkillConfig {
   @Prop({ required: true, default: false }) allowAiExplanation!: boolean;
 }
 
-export const AerodromeVoteSkillConfigSchema = SchemaFactory.createForClass(AerodromeVoteSkillConfig);
+export const AerodromeVoteSkillConfigSchema =
+  SchemaFactory.createForClass(AerodromeVoteSkillConfig);

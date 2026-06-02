@@ -15,7 +15,21 @@ export class SkillInstallation {
   @Prop({ required: true, index: true }) adapter!: string;
   @Prop({ required: true }) executorAddress!: string;
   @Prop({ required: true, index: true }) executorAddressNormalized!: string;
-  @Prop({ required: true, enum: ['draft', 'pending_permission', 'permission_granted', 'active', 'paused', 'revoked', 'expired', 'error'], index: true }) status!: string;
+  @Prop({
+    required: true,
+    enum: [
+      'draft',
+      'pending_permission',
+      'permission_granted',
+      'active',
+      'paused',
+      'revoked',
+      'expired',
+      'error',
+    ],
+    index: true,
+  })
+  status!: string;
   @Prop({ required: true, type: Object }) config!: Record<string, unknown>;
   @Prop({ required: true, type: Object }) permissionManifest!: Record<string, unknown>;
   @Prop({ type: Object }) walletPermissionRequest?: Record<string, unknown>;

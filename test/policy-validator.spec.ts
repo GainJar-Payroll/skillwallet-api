@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { PolicyValidatorService } from '../src/runtime/policy/policy-validator.service';
 import type { ProposedAction } from '../src/runtime/schemas/execution-attempt.schema';
 import type { PolicyManifest } from '../src/runtime/policy/policy-types';
+import type { SkillInstallation } from '../src/installations/schemas/skill-installation.schema';
 
 const USDC = '0x4200000000000000000000000000000000000042';
 const WETH = '0x420000000000000000000000000000000000000b';
@@ -15,25 +16,62 @@ function buildManifest(): PolicyManifest {
     allowedTokens: [USDC, WETH],
     validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     rules: [
-      { id: 'r1', enforcement: 'backend-policy', source: 'skillwallet', kind: 'fixed-token-in', label: '', data: { token: USDC } },
-      { id: 'r2', enforcement: 'backend-policy', source: 'skillwallet', kind: 'fixed-token-out', label: '', data: { token: WETH } },
-      { id: 'r3', enforcement: 'backend-policy', source: 'skillwallet', kind: 'fixed-recipient', label: '', data: { recipient: SMART_ACCOUNT } },
-      { id: 'r4', enforcement: 'backend-policy', source: 'skillwallet', kind: 'max-slippage', label: '', data: { maxSlippageBps: 50 } },
+      {
+        id: 'r1',
+        enforcement: 'backend-policy',
+        source: 'skillwallet',
+        kind: 'fixed-token-in',
+        label: '',
+        data: { token: USDC },
+      },
+      {
+        id: 'r2',
+        enforcement: 'backend-policy',
+        source: 'skillwallet',
+        kind: 'fixed-token-out',
+        label: '',
+        data: { token: WETH },
+      },
+      {
+        id: 'r3',
+        enforcement: 'backend-policy',
+        source: 'skillwallet',
+        kind: 'fixed-recipient',
+        label: '',
+        data: { recipient: SMART_ACCOUNT },
+      },
+      {
+        id: 'r4',
+        enforcement: 'backend-policy',
+        source: 'skillwallet',
+        kind: 'max-slippage',
+        label: '',
+        data: { maxSlippageBps: 50 },
+      },
     ],
   };
 }
 
-function buildInstallation(): any {
+function buildInstallation(): SkillInstallation {
   return {
     installationId: 'inst_1',
-    chainId: 8453,
-    status: 'active',
+    userAddress: '0xaaaa',
     userAddressNormalized: '0xaaaa',
     smartAccountAddress: SMART_ACCOUNT,
+    smartAccountAddressNormalized: SMART_ACCOUNT.toLowerCase(),
+    chainId: 8453,
+    skillId: 'dca-usdc-weth',
+    adapter: 'dca',
+    executorAddress: '0xbbbb',
     executorAddressNormalized: '0xbbbb',
+    status: 'active',
     config: {},
     permissionManifest: {},
-  };
+    budget: {},
+    pricingPlan: {},
+    schedule: {},
+    runtime: {},
+  } as unknown as SkillInstallation;
 }
 
 function buildSwapAction(overrides: Partial<ProposedAction> = {}): ProposedAction {
@@ -102,7 +140,10 @@ describe('PolicyValidatorService', () => {
 
   it('blocks tokenOut not matching WETH', () => {
     const action = buildSwapAction({
-      decoded: { ...buildSwapAction().decoded, tokenOut: '0x4200000000000000000000000000000000000099' },
+      decoded: {
+        ...buildSwapAction().decoded,
+        tokenOut: '0x4200000000000000000000000000000000000099',
+      },
     });
     const result = validator.validate(installation, action, manifest);
     expect(result.ok).toBe(false);
@@ -110,7 +151,10 @@ describe('PolicyValidatorService', () => {
 
   it('blocks recipient not smart account', () => {
     const action = buildSwapAction({
-      decoded: { ...buildSwapAction().decoded, recipient: '0x4200000000000000000000000000000000000099' },
+      decoded: {
+        ...buildSwapAction().decoded,
+        recipient: '0x4200000000000000000000000000000000000099',
+      },
     });
     const result = validator.validate(installation, action, manifest);
     expect(result.ok).toBe(false);
@@ -121,7 +165,14 @@ describe('PolicyValidatorService', () => {
       ...manifest,
       rules: [
         ...manifest.rules,
-        { id: 'r5', enforcement: 'backend-policy', source: 'skillwallet', kind: 'erc20-periodic-spend', label: '', data: { periodAmount: '10', tokenAddress: USDC } },
+        {
+          id: 'r5',
+          enforcement: 'backend-policy',
+          source: 'skillwallet',
+          kind: 'erc20-periodic-spend',
+          label: '',
+          data: { periodAmount: '10', tokenAddress: USDC },
+        },
       ],
     };
     const action = buildSwapAction({
@@ -132,7 +183,11 @@ describe('PolicyValidatorService', () => {
   });
 
   it('blocks when installation is not active', () => {
-    const result = validator.validate({ ...installation, status: 'paused' }, buildSwapAction(), manifest);
+    const result = validator.validate(
+      { ...installation, status: 'paused' },
+      buildSwapAction(),
+      manifest,
+    );
     expect(result.ok).toBe(false);
     expect(result.blockedReason).toBe('installation not active');
   });

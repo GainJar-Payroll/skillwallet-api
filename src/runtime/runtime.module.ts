@@ -9,6 +9,8 @@ import { DcaAdapter } from './adapters/dca.adapter';
 import { AerodromeVoteAdapter } from './adapters/aerodrome-vote.adapter';
 import { PolicyValidatorService } from './policy/policy-validator.service';
 import { OneShotRelayerService } from './relayers/oneshot-relayer.service';
+import { WebhookSignatureVerifier } from './relayers/webhook-signature-verifier.service';
+import { OneshotWebhookController } from './relayers/oneshot-webhook.controller';
 import { RunnerService } from './scheduler/runner.service';
 import { SchedulerService } from './scheduler/scheduler.service';
 import { RuntimeController } from './runtime.controller';
@@ -30,14 +32,16 @@ import { InstallationsModule } from '../installations/installations.module';
     AdapterRegistryService,
     PolicyValidatorService,
     OneShotRelayerService,
+    WebhookSignatureVerifier,
     RunnerService,
     SchedulerService,
   ],
-  controllers: [RuntimeController],
+  controllers: [RuntimeController, OneshotWebhookController],
   exports: [
     AdapterRegistryService,
     PolicyValidatorService,
     OneShotRelayerService,
+    WebhookSignatureVerifier,
     RunnerService,
     SchedulerService,
   ],

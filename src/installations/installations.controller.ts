@@ -31,10 +31,7 @@ export class InstallationsController {
   }
 
   @Patch(':installationId/status')
-  async updateStatus(
-    @Param('installationId') installationId: string,
-    @Body() body: unknown,
-  ) {
+  async updateStatus(@Param('installationId') installationId: string, @Body() body: unknown) {
     const parsed: UpdateInstallationStatusDto = updateInstallationStatusSchema.parse(body);
     return this.installationsService.updateStatus(installationId, parsed);
   }

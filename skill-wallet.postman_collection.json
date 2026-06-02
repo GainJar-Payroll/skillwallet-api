@@ -1,0 +1,567 @@
+{
+  "info": {
+    "_postman_id": "skill-wallet-collection-v1",
+    "name": "SkillWallet Core Backend",
+    "description": "NestJS backend for the MetaMask-native wallet skill marketplace. Endpoints are organized by module: Health, Chains, Skills, Installations, Permissions, Executors, Runtime, and 1Shot webhooks.\n\n**Auth note:** the API itself is unauthenticated (designed to sit behind your gateway). The ONLY authn surface is `POST /webhooks/oneshot` (Ed25519 signature over raw body).\n\n**Variables:** `{{baseUrl}}` resolves from the environment file. Set `baseUrl` to `http://localhost:4000` for local dev. Path params and chain IDs are also exposed as variables — update them once per session.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "chainId",
+      "value": "8453",
+      "type": "string",
+      "description": "Base mainnet. Change to 1 / 10 / 56 / 130 / 137 / 143 / 146 / 42161 / 42220 / 59144 to test other supported chains."
+    },
+    {
+      "key": "skillId",
+      "value": "dca-usdc-weth",
+      "type": "string"
+    },
+    {
+      "key": "userAddress",
+      "value": "0x000000000000000000000000000000000000dEaD",
+      "type": "string",
+      "description": "EVM address (placeholder). Replace with the real smart account for end-to-end runs."
+    },
+    {
+      "key": "smartAccountAddress",
+      "value": "0x000000000000000000000000000000000000dEaD",
+      "type": "string"
+    },
+    {
+      "key": "executorAddress",
+      "value": "0x000000000000000000000000000000000000bEEF",
+      "type": "string",
+      "description": "Replace with the deployed MVP-1 main executor on the target chain."
+    },
+    {
+      "key": "usdcAddress",
+      "value": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "type": "string",
+      "description": "Canonical USDC on Base mainnet."
+    },
+    {
+      "key": "wethAddress",
+      "value": "0x4200000000000000000000000000000000000006",
+      "type": "string",
+      "description": "Canonical WETH on Base mainnet."
+    },
+    {
+      "key": "swapRouterAddress",
+      "value": "0x2626664c2603336E57B271c5C0b26F421741e481",
+      "type": "string",
+      "description": "Uniswap v3 SwapRouter02 on Base mainnet."
+    },
+    {
+      "key": "installationId",
+      "value": "inst_placeholder",
+      "type": "string"
+    },
+    {
+      "key": "attemptId",
+      "value": "att_placeholder",
+      "type": "string"
+    },
+    {
+      "key": "taskId",
+      "value": "11111111-2222-3333-4444-555555555555",
+      "type": "string",
+      "description": "1Shot task UUID echoed in webhook payloads."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Liveness + DB ping",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Returns `status: ok` and `mongodb: connected` when the backend can reach the database. Use as a smoke test after boot."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chains",
+      "item": [
+        {
+          "name": "List all chain configs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/chains",
+              "host": ["{{baseUrl}}"],
+              "path": ["chains"]
+            },
+            "description": "Returns the 11 seeded chain configs (Ethereum, Linea, Arbitrum, Optimism, BNB, Base, Polygon, Sonic, Unichain, Monad testnet, Celo)."
+          }
+        },
+        {
+          "name": "Get one chain by chainId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/chains/{{chainId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["chains", "{{chainId}}"]
+            },
+            "description": "Returns one chain config. `chainId` is a path param, e.g. 8453 for Base."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Skills (marketplace catalog)",
+      "item": [
+        {
+          "name": "List all skills",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/skills",
+              "host": ["{{baseUrl}}"],
+              "path": ["skills"]
+            },
+            "description": "Returns the marketplace catalog. Built-ins (DCA, Aerodrome Vote) are upserted from `src/skills/definitions/built-in-skills.ts` on every boot."
+          }
+        },
+        {
+          "name": "Get one skill by skillId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/skills/{{skillId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["skills", "{{skillId}}"]
+            }
+          }
+        },
+        {
+          "name": "Create a skill definition (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"skillId\": \"my-new-skill\",\n  \"slug\": \"my-new-skill\",\n  \"name\": \"My New Skill\",\n  \"description\": \"Describe what the skill does in one sentence.\",\n  \"adapter\": \"dca\",\n  \"status\": \"coming-soon\",\n  \"supportedChains\": [8453],\n  \"defaultChainId\": 8453,\n  \"aiMode\": \"none\",\n  \"permissionTemplate\": {\n    \"type\": \"skillwallet.permission.v1\",\n    \"defaultSelectors\": [],\n    \"defaultTokens\": [\"USDC\", \"WETH\"]\n  },\n  \"pricing\": {\n    \"type\": \"fixed-duration\",\n    \"options\": [\n      { \"id\": \"monthly\", \"label\": \"1 Month\", \"durationDays\": 30, \"skillFeeUsdc\": \"0.50\" },\n      { \"id\": \"annual\", \"label\": \"12 Months\", \"durationDays\": 365, \"skillFeeUsdc\": \"4.00\", \"recommended\": true }\n    ]\n  },\n  \"defaultSchedule\": { \"type\": \"recurring\", \"frequency\": \"weekly\", \"timezone\": \"UTC\" },\n  \"metadata\": { \"icon\": \"my-icon\", \"tags\": [\"tag1\"], \"riskLevel\": \"medium\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/skills",
+              "host": ["{{baseUrl}}"],
+              "path": ["skills"]
+            },
+            "description": "Create a non-built-in skill. Conflicts on `skillId` return 409."
+          }
+        },
+        {
+          "name": "Patch a skill (admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"live\",\n  \"metadata\": { \"tags\": [\"updated\"], \"riskLevel\": \"low\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/skills/{{skillId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["skills", "{{skillId}}"]
+            },
+            "description": "Partial update. Built-ins require `allowOverwriteBuiltIn: true` — not exposed in REST yet."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Installations",
+      "item": [
+        {
+          "name": "List installations (filter by user)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/installations?userAddress={{userAddress}}&chainId={{chainId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["installations"],
+              "query": [
+                { "key": "userAddress", "value": "{{userAddress}}" },
+                { "key": "chainId", "value": "{{chainId}}" },
+                { "key": "status", "value": "active", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get one installation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/installations/{{installationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["installations", "{{installationId}}"]
+            }
+          }
+        },
+        {
+          "name": "Create installation (DCA on Base)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userAddress\": \"{{userAddress}}\",\n  \"smartAccountAddress\": \"{{smartAccountAddress}}\",\n  \"skillId\": \"{{skillId}}\",\n  \"chainId\": {{chainId}},\n  \"config\": {\n    \"type\": \"dca\",\n    \"tokenIn\":  { \"symbol\": \"USDC\", \"address\": \"{{usdcAddress}}\",   \"decimals\": 6  },\n    \"tokenOut\": { \"symbol\": \"WETH\", \"address\": \"{{wethAddress}}\",   \"decimals\": 18 },\n    \"amountPerRun\": \"10.00\",\n    \"frequency\": \"weekly\",\n    \"maxSlippageBps\": 50,\n    \"router\": { \"name\": \"uniswap\", \"address\": \"{{swapRouterAddress}}\" },\n    \"recipient\": \"{{smartAccountAddress}}\",\n    \"quoteMode\": \"router-quote\"\n  },\n  \"pricingPlan\": {\n    \"id\": \"quarterly\",\n    \"label\": \"3 Months\",\n    \"durationDays\": 90,\n    \"skillFeeUsdc\": \"1.20\"\n  },\n  \"schedule\": { \"frequency\": \"weekly\", \"timezone\": \"UTC\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/installations",
+              "host": ["{{baseUrl}}"],
+              "path": ["installations"]
+            },
+            "description": "Creates a `draft` installation. The next step is `POST /permissions/prepare` to build the ERC-7715 wallet request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.installationId) pm.collectionVariables.set('installationId', j.installationId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update installation status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/installations/{{installationId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["installations", "{{installationId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Pause installation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/installations/{{installationId}}/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["installations", "{{installationId}}", "pause"]
+            }
+          }
+        },
+        {
+          "name": "Resume installation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/installations/{{installationId}}/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["installations", "{{installationId}}", "resume"]
+            }
+          }
+        },
+        {
+          "name": "Revoke installation (irreversible)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/installations/{{installationId}}/revoke",
+              "host": ["{{baseUrl}}"],
+              "path": ["installations", "{{installationId}}", "revoke"]
+            },
+            "description": "Revokes the ERC-7710 delegation on-chain. After this, the scheduler will skip the installation. Cannot be undone except by creating a new installation."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Permissions (ERC-7715 / ERC-7710)",
+      "item": [
+        {
+          "name": "Prepare permission request (manifest + walletRequest)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userAddress\": \"{{userAddress}}\",\n  \"smartAccountAddress\": \"{{smartAccountAddress}}\",\n  \"chainId\": {{chainId}},\n  \"skillId\": \"{{skillId}}\",\n  \"config\": {\n    \"type\": \"dca\",\n    \"tokenIn\":  { \"symbol\": \"USDC\", \"address\": \"{{usdcAddress}}\",   \"decimals\": 6  },\n    \"tokenOut\": { \"symbol\": \"WETH\", \"address\": \"{{wethAddress}}\",   \"decimals\": 18 },\n    \"amountPerRun\": \"10.00\",\n    \"frequency\": \"weekly\",\n    \"maxSlippageBps\": 50,\n    \"router\": { \"name\": \"uniswap\", \"address\": \"{{swapRouterAddress}}\" },\n    \"recipient\": \"{{smartAccountAddress}}\",\n    \"quoteMode\": \"router-quote\"\n  },\n  \"pricingPlan\": {\n    \"id\": \"quarterly\",\n    \"label\": \"3 Months\",\n    \"durationDays\": 90,\n    \"skillFeeUsdc\": \"1.20\"\n  },\n  \"schedule\": { \"frequency\": \"weekly\", \"timezone\": \"UTC\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/permissions/prepare",
+              "host": ["{{baseUrl}}"],
+              "path": ["permissions", "prepare"]
+            },
+            "description": "Builds the app-level `PermissionManifest` AND the ERC-7715 `walletRequest`. Pass the `walletRequest` to MetaMask / Snap for user signing. The response is hashed (`manifestHash`, `requestHash`) for later correlation."
+          }
+        },
+        {
+          "name": "Submit permission grant (post-sign)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"installationId\": \"{{installationId}}\",\n  \"rawGrantResponse\": {\n    \"_placeholder\": \"paste the raw response object returned by wallet_requestExecutionPermissions\"\n  },\n  \"context\": \"0xdeadbeef\",\n  \"delegationManager\": \"0x0000000000000000000000000000000000000000\",\n  \"dependencies\": [],\n  \"expiresAt\": \"2026-12-31T00:00:00.000Z\",\n  \"normalizedPermissions\": [\n    {\n      \"chainId\": \"{{chainId}}\",\n      \"from\": \"{{userAddress}}\",\n      \"to\": \"{{smartAccountAddress}}\",\n      \"permissionType\": \"erc20-token-periodic\",\n      \"data\": {}\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/permissions/grant",
+              "host": ["{{baseUrl}}"],
+              "path": ["permissions", "grant"]
+            },
+            "description": "Persists the wallet's signed grant and (if `context` + `delegationManager` provided) creates the ERC-7710 `DelegationRecord`. Activates the installation on success."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Executors (MVP 1 registry)",
+      "item": [
+        {
+          "name": "List executors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/executors",
+              "host": ["{{baseUrl}}"],
+              "path": ["executors"]
+            },
+            "description": "Returns all executor registry entries. MVP 1: one main executor per chain, `adapter: 'multi'`."
+          }
+        },
+        {
+          "name": "Register executor (chain)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"adapter\": \"multi\",\n  \"chainId\": {{chainId}},\n  \"executorAddress\": \"{{executorAddress}}\",\n  \"delegationManagerAddress\": \"0x0000000000000000000000000000000000000000\",\n  \"metadata\": { \"note\": \"main executor, MVP 1\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/executors",
+              "host": ["{{baseUrl}}"],
+              "path": ["executors"]
+            },
+            "description": "Registers the MVP-1 main executor for a chain. Backend never holds executor private keys — only the public address + delegation manager."
+          }
+        },
+        {
+          "name": "Update executor (status / DM)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"active\",\n  \"delegationManagerAddress\": \"0x0000000000000000000000000000000000000000\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/executors/{{executorAddress}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["executors", "{{executorAddress}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Runtime (scheduler + runner)",
+      "item": [
+        {
+          "name": "Run-due installations (cron-like)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/runtime/run-due",
+              "host": ["{{baseUrl}}"],
+              "path": ["runtime", "run-due"]
+            },
+            "description": "Picks every active installation whose `nextRunAt` has elapsed, validates, relays. Returns a summary of attempts created."
+          }
+        },
+        {
+          "name": "Run one installation now",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"force\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/runtime/run/{{installationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["runtime", "run", "{{installationId}}"]
+            },
+            "description": "Force-runs one installation regardless of schedule. Use for manual testing. Returns the full `ExecutionAttempt` including the `relay` record (with `taskId` for status polling)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.attemptId) pm.collectionVariables.set('attemptId', j.attemptId);",
+                  "  if (j.relay && j.relay.taskId) pm.collectionVariables.set('taskId', j.relay.taskId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List attempts for an installation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/runtime/attempts?installationId={{installationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["runtime", "attempts"],
+              "query": [
+                { "key": "installationId", "value": "{{installationId}}" }
+              ]
+            },
+            "description": "`installationId` query param is required. Returns attempts in reverse-chronological order."
+          }
+        },
+        {
+          "name": "Get one attempt",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/runtime/attempts/{{attemptId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["runtime", "attempts", "{{attemptId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1Shot Webhook (signed)",
+      "item": [
+        {
+          "name": "Webhook with valid Ed25519 signature",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "signature", "value": "{{oneshotSignature}}", "description": "base64 Ed25519 signature over the raw body bytes" },
+              { "key": "key-id", "value": "{{oneshotKid}}", "description": "JWKS kid (optional; first key used if absent)" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskId\": \"{{taskId}}\",\n  \"statusCode\": 200,\n  \"txHash\": \"0x1111111111111111111111111111111111111111111111111111111111111111\",\n  \"externalStatusUrl\": \"https://relayer.1shotapi.dev/relayers/0xabc/tasks/{{taskId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/oneshot",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "oneshot"]
+            },
+            "description": "Real 1Shot webhook. The controller verifies the Ed25519 signature against JWKS (`ONESHOT_JWKS_URL`) or fallback (`ONESHOT_WEBHOOK_PUBLIC_KEY`) and patches the `ExecutionAttempt` matching `taskId`. `oneshotSignature` and `oneshotKid` are set by 1Shot."
+          }
+        },
+        {
+          "name": "Webhook with bad signature (should 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "signature", "value": "deadbeef" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskId\": \"{{taskId}}\",\n  \"statusCode\": 200\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/oneshot",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "oneshot"]
+            },
+            "description": "Sanity test — server must reject with 401 `Invalid webhook signature`."
+          }
+        },
+        {
+          "name": "Webhook with no signature (should 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskId\": \"{{taskId}}\",\n  \"statusCode\": 200\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/oneshot",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "oneshot"]
+            },
+            "description": "Sanity test — server must reject with 401 `Missing webhook signature header`."
+          }
+        }
+      ]
+    }
+  ]
+}

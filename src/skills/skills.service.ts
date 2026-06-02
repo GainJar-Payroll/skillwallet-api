@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { SkillDefinition, SkillDefinitionDocument } from './schemas/skill-definition.schema';
@@ -39,7 +39,11 @@ export class SkillsService {
     return created.toObject();
   }
 
-  async update(skillId: string, input: Partial<SkillDefinition>, allowOverwriteBuiltIn = false): Promise<SkillDefinition> {
+  async update(
+    skillId: string,
+    input: Partial<SkillDefinition>,
+    allowOverwriteBuiltIn = false,
+  ): Promise<SkillDefinition> {
     const existing = await this.skillModel.findOne({ skillId });
     if (!existing) {
       throw new AppError(ErrorCode.NOT_FOUND, `Skill not found: ${skillId}`);
@@ -67,8 +71,8 @@ export class SkillsService {
   }
 
   async ensureBuiltInsSeeded(): Promise<void> {
-    const count = await this.skillModel.countDocuments({ builtIn: true });
-    if (count > 0) return;
+    // Always upsert: code is the source of truth for built-in catalog.
+    // `updateOne` with `upsert: true` is a no-op when nothing changed.
     const { builtInSkills } = await import('./definitions/built-in-skills');
     await this.upsertBuiltIn(builtInSkills);
   }

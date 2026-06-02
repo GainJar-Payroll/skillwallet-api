@@ -17,4 +17,6 @@ export class WalletPermissionGrantRecord {
   @Prop({ type: [Object], required: true }) normalizedPermissions!: Array<Record<string, unknown>>;
 }
 
-export const WalletPermissionGrantSchema = SchemaFactory.createForClass(WalletPermissionGrantRecord);
+export const WalletPermissionGrantSchema = SchemaFactory.createForClass(
+  WalletPermissionGrantRecord,
+);

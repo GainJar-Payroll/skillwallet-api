@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { v4 as uuidv4 } from 'uuid';
 import {
   PermissionManifest,
   PermissionManifestDocument,
@@ -14,14 +13,24 @@ import {
   WalletPermissionGrantRecord,
   WalletPermissionGrantDocument,
 } from './schemas/wallet-permission-grant.schema';
+import { DelegationRecord, DelegationRecordDocument } from './schemas/delegation-record.schema';
 import {
-  DelegationRecord,
-  DelegationRecordDocument,
-} from './schemas/delegation-record.schema';
-import { SkillInstallation, SkillInstallationDocument } from '../installations/schemas/skill-installation.schema';
-import { SkillDefinition, SkillDefinitionDocument } from '../skills/schemas/skill-definition.schema';
-import { ExecutorRegistry, ExecutorRegistryDocument } from '../executors/schemas/executor-registry.schema';
-import { PermissionCompilerService, DcaCompileInput, AerodromeVoteCompileInput } from './permission-compiler.service';
+  SkillInstallation,
+  SkillInstallationDocument,
+} from '../installations/schemas/skill-installation.schema';
+import {
+  SkillDefinition,
+  SkillDefinitionDocument,
+} from '../skills/schemas/skill-definition.schema';
+import {
+  ExecutorRegistry,
+  ExecutorRegistryDocument,
+} from '../executors/schemas/executor-registry.schema';
+import {
+  PermissionCompilerService,
+  DcaCompileInput,
+  AerodromeVoteCompileInput,
+} from './permission-compiler.service';
 import { InstallationsService } from '../installations/installations.service';
 import {
   PreparePermissionRequestDto,
@@ -111,7 +120,10 @@ export class PermissionsService {
             durationDays: input.pricingPlan.durationDays,
           });
 
-    const persistedManifest = await this.manifestModel.create(compiled.manifest);
+    const persistedManifest = await this.manifestModel.create({
+      ...compiled.manifest,
+      manifestHash: compiled.manifestHash,
+    });
     const persistedRequest = await this.requestModel.create({
       ...compiled.walletRequest,
       compiledFromManifestHash: compiled.manifestHash,
@@ -120,23 +132,19 @@ export class PermissionsService {
       requestedAt: new Date(),
     });
 
-    const installation = await this.installations.createDraft(
-      input,
-      executor.executorAddress,
-      {
-        manifestId: persistedManifest.manifestId,
-        manifestHash: compiled.manifestHash,
-        title: persistedManifest.title,
-        summary: persistedManifest.summary,
-        allowedActions: persistedManifest.allowedActions,
-        forbiddenActions: persistedManifest.forbiddenActions,
-        allowedTargets: persistedManifest.allowedTargets,
-        allowedSelectors: persistedManifest.allowedSelectors,
-        allowedTokens: persistedManifest.allowedTokens,
-        rules: persistedManifest.rules,
-        validUntil: persistedManifest.validUntil,
-      },
-    );
+    const installation = await this.installations.createDraft(input, executor.executorAddress, {
+      manifestId: persistedManifest.manifestId,
+      manifestHash: compiled.manifestHash,
+      title: persistedManifest.title,
+      summary: persistedManifest.summary,
+      allowedActions: persistedManifest.allowedActions,
+      forbiddenActions: persistedManifest.forbiddenActions,
+      allowedTargets: persistedManifest.allowedTargets,
+      allowedSelectors: persistedManifest.allowedSelectors,
+      allowedTokens: persistedManifest.allowedTokens,
+      rules: persistedManifest.rules,
+      validUntil: persistedManifest.validUntil,
+    });
 
     await this.installations.setPermissionRequest(
       installation.installationId,
@@ -155,7 +163,9 @@ export class PermissionsService {
     grant: WalletPermissionGrantRecord;
     delegation?: DelegationRecord;
   }> {
-    const installation = await this.installationModel.findOne({ installationId: input.installationId });
+    const installation = await this.installationModel.findOne({
+      installationId: input.installationId,
+    });
     if (!installation) {
       throw new AppError(ErrorCode.NOT_FOUND, `Installation not found: ${input.installationId}`);
     }
@@ -173,10 +183,7 @@ export class PermissionsService {
       );
     }
     if (!input.expiresAt) {
-      throw new AppError(
-        ErrorCode.VALIDATION_ERROR,
-        'expiresAt must be provided in the grant',
-      );
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'expiresAt must be provided in the grant');
     }
     if (!input.normalizedPermissions || input.normalizedPermissions.length === 0) {
       throw new AppError(

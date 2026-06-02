@@ -21,7 +21,10 @@ export function frequencyToPeriodSeconds(frequency: 'daily' | 'weekly' | 'monthl
   }
 }
 
-export function nextRunFromFrequency(from: Date | null, frequency: 'daily' | 'weekly' | 'monthly'): Date | null {
+export function nextRunFromFrequency(
+  from: Date | null,
+  frequency: 'daily' | 'weekly' | 'monthly',
+): Date | null {
   if (!from) return null;
   return new Date(from.getTime() + frequencyToPeriodSeconds(frequency) * 1000);
 }

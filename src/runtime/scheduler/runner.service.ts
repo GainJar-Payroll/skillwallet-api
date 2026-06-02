@@ -9,6 +9,7 @@ import { SkillInstallation } from '../../installations/schemas/skill-installatio
 import { ExecutionAttempt } from '../schemas/execution-attempt.schema';
 import { nextRunFromFrequency } from '../../common/utils/time';
 import { RelaySubmissionResult } from '../relayers/relayer.interface';
+import { PolicyManifest } from '../policy/policy-types';
 
 @Injectable()
 export class RunnerService {
@@ -35,7 +36,9 @@ export class RunnerService {
 
     const locked = await this.installations.lockInstallation(installationId, 'runner');
     if (!locked) {
-      await this.attempts.updateStatus(attempt.attemptId, 'skipped', { error: 'installation is locked' });
+      await this.attempts.updateStatus(attempt.attemptId, 'skipped', {
+        error: 'installation is locked',
+      });
       throw new Error('installation is locked by another runner');
     }
 
@@ -62,7 +65,7 @@ export class RunnerService {
       const { proposedAction } = await adapter.buildAction({ installation, now });
 
       await this.attempts.updateStatus(attempt.attemptId, 'policy_checking', { proposedAction });
-      const manifest = installation.permissionManifest as any;
+      const manifest = installation.permissionManifest as unknown as PolicyManifest;
       const policyResult = this.policy.validate(installation, proposedAction, {
         allowedTargets: manifest.allowedTargets ?? [],
         allowedSelectors: manifest.allowedSelectors ?? [],
@@ -71,7 +74,10 @@ export class RunnerService {
         validUntil: manifest.validUntil,
       });
       if (!policyResult.ok) {
-        await this.attempts.updateStatus(attempt.attemptId, 'blocked', { policyResult, error: policyResult.blockedReason });
+        await this.attempts.updateStatus(attempt.attemptId, 'blocked', {
+          policyResult,
+          error: policyResult.blockedReason,
+        });
         await this.activity.log({
           installationId,
           attemptId: attempt.attemptId,
@@ -84,25 +90,46 @@ export class RunnerService {
         return (await this.attempts.findById(attempt.attemptId))!;
       }
 
+      const grant = installation.walletPermissionGrant as
+        | { delegationManager?: string; context?: string }
+        | undefined;
+      const delegation = installation.delegation as { permissionContext?: string } | undefined;
+      const delegationManager = grant?.delegationManager;
+      const permissionContext = delegation?.permissionContext ?? grant?.context ?? '';
+      if (!delegationManager || !permissionContext) {
+        await this.attempts.updateStatus(attempt.attemptId, 'failed', {
+          error: 'missing delegationManager or permissionContext on installation',
+        });
+        await this.activity.log({
+          installationId,
+          attemptId: attempt.attemptId,
+          userAddress: installation.userAddress,
+          chainId: installation.chainId,
+          type: 'execution.failed',
+          message: 'Cannot relay: missing delegationManager or permissionContext',
+        });
+        await this.installations.recordFailure(installationId, 'missing delegation context');
+        await this.scheduleNextRun(installation);
+        return (await this.attempts.findById(attempt.attemptId))!;
+      }
+
       await this.attempts.updateStatus(attempt.attemptId, 'relaying', { policyResult });
-      const grant = installation.walletPermissionGrant as any;
-      const delegation = installation.delegation as any;
       let relayResult: RelaySubmissionResult;
       try {
         relayResult = await this.relayer.relayDelegatedExecution({
           chainId: installation.chainId,
-          delegationManager: grant?.delegationManager,
-          permissionContext: delegation?.permissionContext ?? grant?.context,
-          calls: [
-            {
-              to: proposedAction.target,
-              data: proposedAction.calldata,
-              value: proposedAction.value === '0x0' ? undefined : proposedAction.value,
-            },
-          ],
+          delegationManager,
+          permissionContext,
+          call: {
+            to: proposedAction.target,
+            data: proposedAction.calldata,
+            value: proposedAction.value === '0x0' ? undefined : proposedAction.value,
+          },
         });
       } catch (err) {
-        await this.attempts.updateStatus(attempt.attemptId, 'failed', { error: (err as Error).message });
+        await this.attempts.updateStatus(attempt.attemptId, 'failed', {
+          error: (err as Error).message,
+        });
         await this.activity.log({
           installationId,
           attemptId: attempt.attemptId,
@@ -116,16 +143,29 @@ export class RunnerService {
         return (await this.attempts.findById(attempt.attemptId))!;
       }
 
-      const finalStatus = relayResult.status === 'confirmed' ? 'confirmed' : relayResult.status === 'failed' ? 'failed' : 'relayed';
+      const finalStatus =
+        relayResult.status === 'confirmed'
+          ? 'confirmed'
+          : relayResult.status === 'rejected' || relayResult.status === 'reverted'
+            ? 'failed'
+            : 'relayed';
       await this.attempts.updateStatus(attempt.attemptId, finalStatus, {
         relay: {
           provider: '1shot',
-          relayId: relayResult.relayId,
+          taskId: relayResult.taskId,
+          statusCode: relayResult.statusCode,
           status: relayResult.status,
+          targetAddress: relayResult.targetAddress,
+          paymentToken: relayResult.paymentToken,
+          requiredPaymentAmount: relayResult.requiredPaymentAmount,
+          context: relayResult.context,
           txHash: relayResult.txHash,
           externalStatusUrl: relayResult.externalStatusUrl,
+          errorCode: relayResult.errorCode,
+          errorMessage: relayResult.errorMessage,
         },
       });
+
       if (finalStatus === 'confirmed' || finalStatus === 'relayed') {
         await this.activity.log({
           installationId,
@@ -133,7 +173,10 @@ export class RunnerService {
           userAddress: installation.userAddress,
           chainId: installation.chainId,
           type: finalStatus === 'confirmed' ? 'execution.confirmed' : 'execution.relayed',
-          message: finalStatus === 'confirmed' ? `Confirmed: ${relayResult.txHash}` : `Relayed via 1Shot: ${relayResult.relayId}`,
+          message:
+            finalStatus === 'confirmed'
+              ? `Confirmed: ${relayResult.txHash}`
+              : `Relayed via 1Shot: ${relayResult.taskId}`,
           metadata: { relayResult },
         });
         await this.scheduleNextRun(installation);
@@ -144,9 +187,12 @@ export class RunnerService {
           userAddress: installation.userAddress,
           chainId: installation.chainId,
           type: 'execution.failed',
-          message: `1Shot returned failed: ${relayResult.error ?? 'unknown'}`,
+          message: `1Shot returned ${relayResult.statusCode}: ${relayResult.errorMessage ?? 'unknown'}`,
         });
-        await this.installations.recordFailure(installationId, 'relayer reported failed status');
+        await this.installations.recordFailure(
+          installationId,
+          `relayer statusCode=${relayResult.statusCode}`,
+        );
         await this.scheduleNextRun(installation);
       }
 

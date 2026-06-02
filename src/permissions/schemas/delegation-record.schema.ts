@@ -6,7 +6,8 @@ export type DelegationRecordDocument = HydratedDocument<DelegationRecord>;
 @Schema({ timestamps: true, collection: 'delegation_records' })
 export class DelegationRecord {
   @Prop({ required: true, default: 'erc7710' }) standard!: string;
-  @Prop({ required: true, enum: ['redeemable', 'revoked', 'expired', 'unknown'], index: true }) status!: string;
+  @Prop({ required: true, enum: ['redeemable', 'revoked', 'expired', 'unknown'], index: true })
+  status!: string;
   @Prop({ required: true }) delegator!: string;
   @Prop({ required: true }) delegate!: string;
   @Prop({ required: true }) delegationManager!: string;

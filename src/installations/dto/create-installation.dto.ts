@@ -23,7 +23,10 @@ const dcaConfigSchema = z.object({
   }),
   recipient: addressField,
   quoteMode: z.enum(['external-quote-required', 'router-quote', 'manual-min-out']),
-  minAmountOut: z.string().regex(/^\d+(\.\d+)?$/).optional(),
+  minAmountOut: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/)
+    .optional(),
 });
 
 const aerodromeVoteConfigSchema = z.object({
@@ -31,11 +34,13 @@ const aerodromeVoteConfigSchema = z.object({
   veAeroTokenId: z.string().min(1),
   strategy: z.enum(['max-reward-density', 'risk-adjusted', 'balanced']),
   maxPools: z.number().int().min(1),
-  executionWindow: z.object({
-    day: z.enum(['wednesday', 'thursday']),
-    startUtcHour: z.number().int().min(0).max(23),
-    endUtcHour: z.number().int().min(0).max(23),
-  }).optional(),
+  executionWindow: z
+    .object({
+      day: z.enum(['wednesday', 'thursday']),
+      startUtcHour: z.number().int().min(0).max(23),
+      endUtcHour: z.number().int().min(0).max(23),
+    })
+    .optional(),
   allowAiExplanation: z.boolean(),
 });
 
@@ -56,22 +61,42 @@ export const createInstallationSchema = z.object({
     timezone: z.string().optional(),
     startAt: z.string().datetime().optional(),
   }),
-  budget: z.object({
-    totalUsdc: z.string().regex(/^\d+(\.\d+)?$/).optional(),
-    perRunUsdc: z.string().regex(/^\d+(\.\d+)?$/).optional(),
-  }).optional(),
+  budget: z
+    .object({
+      totalUsdc: z
+        .string()
+        .regex(/^\d+(\.\d+)?$/)
+        .optional(),
+      perRunUsdc: z
+        .string()
+        .regex(/^\d+(\.\d+)?$/)
+        .optional(),
+    })
+    .optional(),
 });
 
 export type CreateInstallationDto = z.infer<typeof createInstallationSchema>;
 
 export const updateInstallationStatusSchema = z.object({
-  status: z.enum(['draft', 'pending_permission', 'permission_granted', 'active', 'paused', 'revoked', 'expired', 'error']),
+  status: z.enum([
+    'draft',
+    'pending_permission',
+    'permission_granted',
+    'active',
+    'paused',
+    'revoked',
+    'expired',
+    'error',
+  ]),
 });
 
 export type UpdateInstallationStatusDto = z.infer<typeof updateInstallationStatusSchema>;
 
 export const listInstallationsQuerySchema = z.object({
-  userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+  userAddress: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{40}$/)
+    .optional(),
   chainId: z.coerce.number().int().positive().optional(),
   status: z.string().optional(),
   skillId: z.string().optional(),

@@ -1,15 +1,17 @@
 import { CreateSkillDefinitionDto } from '../dto/create-skill-definition.dto';
 
+const DCA_SUPPORTED_CHAINS = [1, 10, 56, 130, 137, 143, 146, 8453, 42161, 42220, 59144] as const;
+
 export const builtInSkills: CreateSkillDefinitionDto[] = [
   {
     skillId: 'dca-usdc-weth',
     slug: 'dca-usdc-weth',
     name: 'DCA USDC → WETH',
     description:
-      'Automated dollar-cost averaging from USDC to WETH on Base. Spend a fixed USDC amount per period and receive WETH back to your smart account.',
+      'Automated dollar-cost averaging from USDC to WETH on Base. Spend a fixed USDC amount per period and receive WETH back to your smart account. Supported on Ethereum, Linea, Arbitrum, Optimism, BNB Chain, Base, Polygon, Sonic, Unichain, Monad, and Celo.',
     adapter: 'dca',
     status: 'live',
-    supportedChains: [8453],
+    supportedChains: [...DCA_SUPPORTED_CHAINS],
     defaultChainId: 8453,
     aiMode: 'none',
     permissionTemplate: {
@@ -48,7 +50,7 @@ export const builtInSkills: CreateSkillDefinitionDto[] = [
     },
     metadata: {
       icon: 'dca',
-      tags: ['dca', 'usdc', 'weth', 'base'],
+      tags: ['dca', 'usdc', 'weth', 'multi-chain'],
       riskLevel: 'medium',
     },
   },
@@ -57,7 +59,7 @@ export const builtInSkills: CreateSkillDefinitionDto[] = [
     slug: 'aerodrome-vote-optimizer',
     name: 'Aerodrome Vote Optimizer',
     description:
-      'Optimize your locked AERO (veAERO) vote allocation across Aerodrome pools. Selects pools based on reward density and risk profile during the weekly voting window.',
+      'Optimize your locked AERO (veAERO) vote allocation across Aerodrome pools on Base. Selects pools based on reward density and risk profile during the weekly voting window.',
     adapter: 'aerodrome-vote',
     status: 'adapter-ready',
     supportedChains: [8453],

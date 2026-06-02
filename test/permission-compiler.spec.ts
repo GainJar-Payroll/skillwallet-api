@@ -68,15 +68,18 @@ describe('PermissionCompilerService', () => {
       durationDays: 7,
     });
 
-    const raw = result.walletRequest.rawRequest as Record<string, any>;
+    const raw = result.walletRequest.rawRequest as Record<string, unknown>;
+    const permission = raw.permission as { type: string; data: Record<string, unknown> };
     expect(raw.chainId).toBe('0x2105');
     expect(raw.from).toBe(SMART_ACCOUNT);
     expect(raw.to).toBe(EXECUTOR);
-    expect(raw.permission.type).toBe('erc20-token-periodic');
-    expect(raw.permission.data.tokenAddress).toBe(USDC);
-    expect(raw.permission.data.periodAmount).toBe('1500000');
-    expect(raw.permission.data.periodDuration).toBe(24 * 60 * 60);
-    expect((result.walletRequest as any).method).toBe('wallet_requestExecutionPermissions');
+    expect(permission.type).toBe('erc20-token-periodic');
+    expect(permission.data.tokenAddress).toBe(USDC);
+    expect(permission.data.periodAmount).toBe('1500000');
+    expect(permission.data.periodDuration).toBe(24 * 60 * 60);
+    expect((result.walletRequest as { method: string }).method).toBe(
+      'wallet_requestExecutionPermissions',
+    );
     expect(result.requestHash).toMatch(/^0x[a-f0-9]{64}$/);
   });
 
@@ -124,8 +127,9 @@ describe('PermissionCompilerService', () => {
       durationDays: 30,
     });
     expect(result.manifest.version).toBe('skillwallet.permission.v1');
-    const raw = result.walletRequest.rawRequest as Record<string, any>;
-    expect(raw.permission.type).toBe('aerodrome-vote-optimizer');
-    expect(raw.permission.data.veAeroTokenId).toBe('12345');
+    const raw = result.walletRequest.rawRequest as Record<string, unknown>;
+    const permission = raw.permission as { type: string; data: Record<string, unknown> };
+    expect(permission.type).toBe('aerodrome-vote-optimizer');
+    expect(permission.data.veAeroTokenId).toBe('12345');
   });
 });
