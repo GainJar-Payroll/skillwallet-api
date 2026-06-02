@@ -14,7 +14,7 @@ export class WalletPermissionGrantRecord {
   @Prop({ type: Object }) dependencies?: Record<string, unknown>[];
   @Prop({ required: true, type: Object }) rawResponse!: Record<string, unknown>;
   @Prop({ required: true }) responseHash!: string;
-  @Prop({ required: true, type: Object }) normalizedPermissions!: Record<string, unknown>;
+  @Prop({ type: [Object], required: true }) normalizedPermissions!: Array<Record<string, unknown>>;
 }
 
 export const WalletPermissionGrantSchema = SchemaFactory.createForClass(WalletPermissionGrantRecord);

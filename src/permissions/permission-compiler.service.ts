@@ -153,10 +153,8 @@ export class PermissionCompilerService {
       'Withdraw funds to executor',
     ];
 
-    const manifestId = `manifest_${uuidv4()}`;
-    const manifest = {
+    const manifestBase = {
       version: 'skillwallet.permission.v1',
-      manifestId,
       skillId: input.skillId,
       chainId: input.chainId,
       delegator: input.userAddress,
@@ -173,7 +171,9 @@ export class PermissionCompilerService {
       validUntil,
     };
 
-    const manifestHash = sha256Hex(manifest);
+    const manifestHash = sha256Hex(manifestBase);
+    const manifestId = `manifest_${uuidv4()}`;
+    const manifest = { ...manifestBase, manifestId };
 
     const amountPerRunBaseUnits = this.toBaseUnits(input.config.amountPerRun, input.config.tokenIn.decimals);
     const requestId = `req_${uuidv4()}`;
@@ -268,10 +268,8 @@ export class PermissionCompilerService {
       },
     ];
 
-    const manifestId = `manifest_${uuidv4()}`;
-    const manifest = {
+    const manifestBase = {
       version: 'skillwallet.permission.v1',
-      manifestId,
       skillId: input.skillId,
       chainId: input.chainId,
       delegator: input.userAddress,
@@ -288,7 +286,9 @@ export class PermissionCompilerService {
       validUntil,
     };
 
-    const manifestHash = sha256Hex(manifest);
+    const manifestHash = sha256Hex(manifestBase);
+    const manifestId = `manifest_${uuidv4()}`;
+    const manifest = { ...manifestBase, manifestId };
 
     const requestId = `req_${uuidv4()}`;
     const chainIdHex = this.toChainIdHex(input.chainId);

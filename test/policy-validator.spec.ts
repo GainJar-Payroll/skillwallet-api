@@ -117,11 +117,11 @@ describe('PolicyValidatorService', () => {
   });
 
   it('blocks amount above max (erc20-periodic-spend rule)', () => {
-    const m = {
+    const m: PolicyManifest = {
       ...manifest,
       rules: [
         ...manifest.rules,
-        { id: 'r5', enforcement: 'backend-policy', source: 'skillwallet', kind: 'erc20-periodic-spend' as const, label: '', data: { periodAmount: '10', tokenAddress: USDC } },
+        { id: 'r5', enforcement: 'backend-policy', source: 'skillwallet', kind: 'erc20-periodic-spend', label: '', data: { periodAmount: '10', tokenAddress: USDC } },
       ],
     };
     const action = buildSwapAction({

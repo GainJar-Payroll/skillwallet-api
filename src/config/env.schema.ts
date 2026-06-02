@@ -19,10 +19,6 @@ export const envSchema = z.object({
   BASE_USDC_ADDRESS: optionalAddress,
   BASE_WETH_ADDRESS: optionalAddress,
   BASE_SWAP_ROUTER_ADDRESS: optionalAddress,
-  ONESHOT_ENABLED: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((value) => value === 'true'),
   ONESHOT_BASE_URL: optionalUrl,
   ONESHOT_API_KEY: z.string().optional().or(z.literal('')),
   ONESHOT_WEBHOOK_SECRET: z.string().optional().or(z.literal('')),

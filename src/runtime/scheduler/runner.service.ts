@@ -162,7 +162,7 @@ export class RunnerService {
       await this.installations.updateNextRunAt(installation.installationId, null, new Date());
       return;
     }
-    const base = installation.schedule?.nextRunAt ?? new Date();
+    const base = (installation.schedule?.nextRunAt as Date | null | undefined) ?? new Date();
     const next = nextRunFromFrequency(base, freq);
     await this.installations.updateNextRunAt(installation.installationId, next, new Date());
   }

@@ -14,6 +14,7 @@ export interface RelaySubmissionResult {
   status: 'queued' | 'submitted' | 'confirmed' | 'failed';
   txHash?: string;
   externalStatusUrl?: string;
+  error?: string;
 }
 
 export interface RelayerStatusResult {
