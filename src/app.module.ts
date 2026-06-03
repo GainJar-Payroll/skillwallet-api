@@ -9,6 +9,9 @@ import { ExecutorsModule } from './executors/executors.module';
 import { RuntimeModule } from './runtime/runtime.module';
 import { HealthModule } from './health/health.module';
 import { ChainsModule } from './chains/chains.module';
+import { ResponseEnvelopeModule } from './common/response/response-envelope.module';
+import { AuthModule } from './common/auth/auth.module';
+import { ProofModule } from './runtime/proof/proof.module';
 
 @Module({
   imports: [
@@ -16,6 +19,8 @@ import { ChainsModule } from './chains/chains.module';
       isGlobal: true,
     }),
     EnvModule,
+    ResponseEnvelopeModule,
+    AuthModule,
     DatabaseModule,
     ChainsModule,
     SkillsModule,
@@ -24,6 +29,7 @@ import { ChainsModule } from './chains/chains.module';
     PermissionsModule,
     RuntimeModule,
     HealthModule,
+    ProofModule,
   ],
 })
 export class AppModule {}

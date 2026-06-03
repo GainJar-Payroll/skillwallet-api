@@ -10,6 +10,7 @@ import { AerodromeVoteAdapter } from './adapters/aerodrome-vote.adapter';
 import { PolicyValidatorService } from './policy/policy-validator.service';
 import { OneShotRelayerService } from './relayers/oneshot-relayer.service';
 import { WebhookSignatureVerifier } from './relayers/webhook-signature-verifier.service';
+import { OneShotBundleValidator } from './relayers/oneshot-bundle-validator';
 import { OneshotWebhookController } from './relayers/oneshot-webhook.controller';
 import { RunnerService } from './scheduler/runner.service';
 import { SchedulerService } from './scheduler/scheduler.service';
@@ -33,6 +34,7 @@ import { InstallationsModule } from '../installations/installations.module';
     PolicyValidatorService,
     OneShotRelayerService,
     WebhookSignatureVerifier,
+    OneShotBundleValidator,
     RunnerService,
     SchedulerService,
   ],
@@ -42,6 +44,7 @@ import { InstallationsModule } from '../installations/installations.module';
     PolicyValidatorService,
     OneShotRelayerService,
     WebhookSignatureVerifier,
+    OneShotBundleValidator,
     RunnerService,
     SchedulerService,
   ],

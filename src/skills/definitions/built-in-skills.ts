@@ -1,6 +1,8 @@
 import { CreateSkillDefinitionDto } from '../dto/create-skill-definition.dto';
 
-const DCA_SUPPORTED_CHAINS = [1, 10, 56, 130, 137, 143, 146, 8453, 42161, 42220, 59144] as const;
+const DCA_SUPPORTED_CHAINS = [
+  1, 10, 56, 130, 137, 143, 146, 8453, 11155111, 42161, 42220, 59144,
+] as const;
 
 export const builtInSkills: CreateSkillDefinitionDto[] = [
   {

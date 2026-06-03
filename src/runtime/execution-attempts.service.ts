@@ -69,6 +69,28 @@ export class ExecutionAttemptsService {
     return doc ? (doc.toObject() as ExecutionAttempt) : null;
   }
 
+  async attachQuoteContext(
+    attemptId: string,
+    payload: {
+      context: string;
+      requiredPaymentAmount?: string;
+      method?: string;
+    },
+  ): Promise<ExecutionAttempt | null> {
+    const update: Record<string, unknown> = {
+      'relay.quoteContext': payload.context,
+    };
+    if (payload.requiredPaymentAmount !== undefined) {
+      update['relay.requiredPaymentAmountEstimate'] = payload.requiredPaymentAmount;
+    }
+    if (payload.method !== undefined) {
+      update['relay.method'] = payload.method;
+    }
+    return this.attemptModel
+      .findOneAndUpdate({ attemptId }, { $set: update }, { new: true })
+      .lean();
+  }
+
   async findById(attemptId: string): Promise<ExecutionAttempt | null> {
     return this.attemptModel.findOne({ attemptId }).lean();
   }

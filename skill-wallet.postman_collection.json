@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "skill-wallet-collection-v1",
     "name": "SkillWallet Core Backend",
-    "description": "NestJS backend for the MetaMask-native wallet skill marketplace. Endpoints are organized by module: Health, Chains, Skills, Installations, Permissions, Executors, Runtime, and 1Shot webhooks.\n\n**Auth note:** the API itself is unauthenticated (designed to sit behind your gateway). The ONLY authn surface is `POST /webhooks/oneshot` (Ed25519 signature over raw body).\n\n**Variables:** `{{baseUrl}}` resolves from the environment file. Set `baseUrl` to `http://localhost:4000` for local dev. Path params and chain IDs are also exposed as variables — update them once per session.",
+    "description": "NestJS backend for the MetaMask-native wallet skill marketplace. Endpoints are organized by module: Health, Chains, Skills, Installations, Permissions, Executors, Runtime, and 1Shot webhooks.\n\n**Response envelope:** every response is wrapped in `{ payload, meta }` on success or `{ error, meta }` on failure. `meta.requestId` correlates to server logs and the `x-request-id` response header. `meta.timestamp` is ISO-8601 UTC.\n\n**Admin auth:** the routes below marked `(admin)` require the `x-api-key` header. The Postman environment has a non-empty `xApiKey` value sourced from `ADMIN_API_KEY` in `.env`. The webhook route is signed by 1Shot (Ed25519).\n\n**Variables:** `{{baseUrl}}` resolves from the environment file. Set `baseUrl` to `http://localhost:4000` for local dev. Path params and chain IDs are also exposed as variables — update them once per session.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -56,6 +56,12 @@
       "value": "0x2626664c2603336E57B271c5C0b26F421741e481",
       "type": "string",
       "description": "Uniswap v3 SwapRouter02 on Base mainnet."
+    },
+    {
+      "key": "xApiKey",
+      "value": "",
+      "type": "string",
+      "description": "Admin API key (sourced from ADMIN_API_KEY in .env). Send as `x-api-key` header on (admin) routes."
     },
     {
       "key": "installationId",
@@ -157,10 +163,8 @@
           "request": {
             "method": "POST",
             "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
             ],
             "body": {
               "mode": "raw",
@@ -171,7 +175,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["skills"]
             },
-            "description": "Create a non-built-in skill. Conflicts on `skillId` return 409."
+            "description": "Create a non-built-in skill. (admin) — requires `x-api-key` header. Conflicts on `skillId` return 409 with code `CONFLICT`."
           }
         },
         {
@@ -179,10 +183,8 @@
           "request": {
             "method": "PATCH",
             "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
             ],
             "body": {
               "mode": "raw",
@@ -193,7 +195,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["skills", "{{skillId}}"]
             },
-            "description": "Partial update. Built-ins require `allowOverwriteBuiltIn: true` — not exposed in REST yet."
+            "description": "Partial update. (admin) — requires `x-api-key`. Built-ins require `allowOverwriteBuiltIn: true` — not exposed in REST yet."
           }
         }
       ]
@@ -231,7 +233,7 @@
           }
         },
         {
-          "name": "Create installation (DCA on Base)",
+          "name": "Prepare permission request (DCA on Base)",
           "request": {
             "method": "POST",
             "header": [
@@ -242,11 +244,11 @@
               "raw": "{\n  \"userAddress\": \"{{userAddress}}\",\n  \"smartAccountAddress\": \"{{smartAccountAddress}}\",\n  \"skillId\": \"{{skillId}}\",\n  \"chainId\": {{chainId}},\n  \"config\": {\n    \"type\": \"dca\",\n    \"tokenIn\":  { \"symbol\": \"USDC\", \"address\": \"{{usdcAddress}}\",   \"decimals\": 6  },\n    \"tokenOut\": { \"symbol\": \"WETH\", \"address\": \"{{wethAddress}}\",   \"decimals\": 18 },\n    \"amountPerRun\": \"10.00\",\n    \"frequency\": \"weekly\",\n    \"maxSlippageBps\": 50,\n    \"router\": { \"name\": \"uniswap\", \"address\": \"{{swapRouterAddress}}\" },\n    \"recipient\": \"{{smartAccountAddress}}\",\n    \"quoteMode\": \"router-quote\"\n  },\n  \"pricingPlan\": {\n    \"id\": \"quarterly\",\n    \"label\": \"3 Months\",\n    \"durationDays\": 90,\n    \"skillFeeUsdc\": \"1.20\"\n  },\n  \"schedule\": { \"frequency\": \"weekly\", \"timezone\": \"UTC\" }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/installations",
+              "raw": "{{baseUrl}}/permissions/prepare",
               "host": ["{{baseUrl}}"],
-              "path": ["installations"]
+              "path": ["permissions", "prepare"]
             },
-            "description": "Creates a `draft` installation. The next step is `POST /permissions/prepare` to build the ERC-7715 wallet request."
+            "description": "Creates a `pending_permission` installation and a `PermissionManifest`. Next: user signs in wallet, then `POST /permissions/grant` to activate."
           },
           "event": [
             {
@@ -256,7 +258,9 @@
                 "exec": [
                   "if (pm.response.code === 201 || pm.response.code === 200) {",
                   "  const j = pm.response.json();",
-                  "  if (j.installationId) pm.collectionVariables.set('installationId', j.installationId);",
+                  "  const inner = j.payload ?? j;",
+                  "  const instId = inner.installationId || (inner.installation && inner.installation.installationId);",
+                  "  if (instId) pm.collectionVariables.set('installationId', instId);",
                   "}"
                 ]
               }
@@ -264,11 +268,31 @@
           ]
         },
         {
-          "name": "Update installation status",
+          "name": "Submit permission grant",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"installationId\": \"{{installationId}}\",\n  \"rawGrantResponse\": {\n    \"_placeholder\": \"paste the raw response object returned by wallet_requestExecutionPermissions\"\n  },\n  \"context\": \"0xdeadbeef\",\n  \"delegationManager\": \"0x0000000000000000000000000000000000000000\",\n  \"dependencies\": [],\n  \"expiresAt\": \"2026-12-31T00:00:00.000Z\",\n  \"normalizedPermissions\": [\n    {\n      \"chainId\": \"{{chainId}}\",\n      \"from\": \"{{userAddress}}\",\n      \"to\": \"{{smartAccountAddress}}\",\n      \"permissionType\": \"erc20-token-periodic\",\n      \"data\": {}\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/permissions/grant",
+              "host": ["{{baseUrl}}"],
+              "path": ["permissions", "grant"]
+            },
+            "description": "Persists the wallet's signed grant and (if `context` + `delegationManager` provided) creates the ERC-7710 `DelegationRecord`. Activates the installation on success."
+          }
+        },
+        {
+          "name": "Update installation status (admin)",
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
             ],
             "body": {
               "mode": "raw",
@@ -278,44 +302,53 @@
               "raw": "{{baseUrl}}/installations/{{installationId}}/status",
               "host": ["{{baseUrl}}"],
               "path": ["installations", "{{installationId}}", "status"]
-            }
+            },
+            "description": "(admin) — requires `x-api-key`."
           }
         },
         {
-          "name": "Pause installation",
+          "name": "Pause installation (admin)",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
+            ],
             "url": {
               "raw": "{{baseUrl}}/installations/{{installationId}}/pause",
               "host": ["{{baseUrl}}"],
               "path": ["installations", "{{installationId}}", "pause"]
-            }
+            },
+            "description": "(admin) — requires `x-api-key`."
           }
         },
         {
-          "name": "Resume installation",
+          "name": "Resume installation (admin)",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
+            ],
             "url": {
               "raw": "{{baseUrl}}/installations/{{installationId}}/resume",
               "host": ["{{baseUrl}}"],
               "path": ["installations", "{{installationId}}", "resume"]
-            }
+            },
+            "description": "(admin) — requires `x-api-key`."
           }
         },
         {
-          "name": "Revoke installation (irreversible)",
+          "name": "Revoke installation (admin, irreversible)",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
+            ],
             "url": {
               "raw": "{{baseUrl}}/installations/{{installationId}}/revoke",
               "host": ["{{baseUrl}}"],
               "path": ["installations", "{{installationId}}", "revoke"]
             },
-            "description": "Revokes the ERC-7710 delegation on-chain. After this, the scheduler will skip the installation. Cannot be undone except by creating a new installation."
+            "description": "(admin) — requires `x-api-key`. Revokes the ERC-7710 delegation on-chain. After this, the scheduler will skip the installation. Cannot be undone except by creating a new installation."
           }
         }
       ]
@@ -380,11 +413,12 @@
           }
         },
         {
-          "name": "Register executor (chain)",
+          "name": "Register executor (chain, admin)",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
             ],
             "body": {
               "mode": "raw",
@@ -395,15 +429,16 @@
               "host": ["{{baseUrl}}"],
               "path": ["executors"]
             },
-            "description": "Registers the MVP-1 main executor for a chain. Backend never holds executor private keys — only the public address + delegation manager."
+            "description": "(admin) — requires `x-api-key`. Registers the MVP-1 main executor for a chain. Backend never holds executor private keys — only the public address + delegation manager."
           }
         },
         {
-          "name": "Update executor (status / DM)",
+          "name": "Update executor (status / DM, admin)",
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{xApiKey}}" }
             ],
             "body": {
               "mode": "raw",
@@ -413,7 +448,8 @@
               "raw": "{{baseUrl}}/executors/{{executorAddress}}",
               "host": ["{{baseUrl}}"],
               "path": ["executors", "{{executorAddress}}"]
-            }
+            },
+            "description": "(admin) — requires `x-api-key`."
           }
         }
       ]
@@ -460,8 +496,9 @@
                 "exec": [
                   "if (pm.response.code === 201 || pm.response.code === 200) {",
                   "  const j = pm.response.json();",
-                  "  if (j.attemptId) pm.collectionVariables.set('attemptId', j.attemptId);",
-                  "  if (j.relay && j.relay.taskId) pm.collectionVariables.set('taskId', j.relay.taskId);",
+                  "  const inner = j.payload ?? j;",
+                  "  if (inner.attemptId) pm.collectionVariables.set('attemptId', inner.attemptId);",
+                  "  if (inner.relay && inner.relay.taskId) pm.collectionVariables.set('taskId', inner.relay.taskId);",
                   "}"
                 ]
               }

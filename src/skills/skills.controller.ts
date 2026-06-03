@@ -6,6 +6,7 @@ import {
   updateSkillDefinitionSchema,
   UpdateSkillDefinitionDto,
 } from './dto/create-skill-definition.dto';
+import { AdminOnly } from '../common/auth';
 
 @Controller('skills')
 export class SkillsController {
@@ -22,12 +23,14 @@ export class SkillsController {
   }
 
   @Post()
+  @AdminOnly()
   async create(@Body() body: unknown) {
     const dto: CreateSkillDefinitionDto = createSkillDefinitionSchema.parse(body);
     return this.skillsService.create(dto);
   }
 
   @Patch(':skillId')
+  @AdminOnly()
   async update(
     @Param('skillId') skillId: string,
     @Body() body: unknown,

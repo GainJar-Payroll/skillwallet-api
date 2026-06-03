@@ -93,3 +93,9 @@ Required scripts:
 - Missing required MongoDB URI must crash at boot.
 - Missing optional integration env must NOT crash (only crash when endpoint called).
 - Never store or request private keys.
+
+## Sub-Agent Convention
+
+- When spawning any sub-agent (background research, explore, librarian, oracle, build, etc.), use the **same model and provider** as the orchestrating session.
+- Active session: model `9router/main`, provider `9router`.
+- Rationale: keeps response style, tool-use discipline, and security posture consistent across the whole agent tree. No mixing of providers within one task graph.

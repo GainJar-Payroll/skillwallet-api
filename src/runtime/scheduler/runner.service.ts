@@ -5,11 +5,14 @@ import { ActivityLogService } from '../activity-log.service';
 import { AdapterRegistryService } from '../adapters/adapter-registry.service';
 import { PolicyValidatorService } from '../policy/policy-validator.service';
 import { OneShotRelayerService } from '../relayers/oneshot-relayer.service';
+import { OneShotBundleValidator } from '../relayers/oneshot-bundle-validator';
 import { SkillInstallation } from '../../installations/schemas/skill-installation.schema';
 import { ExecutionAttempt } from '../schemas/execution-attempt.schema';
 import { nextRunFromFrequency } from '../../common/utils/time';
 import { RelaySubmissionResult } from '../relayers/relayer.interface';
 import { PolicyManifest } from '../policy/policy-types';
+import { AppError } from '../../common/errors/app-error';
+import { ErrorCode } from '../../common/errors/error-codes';
 
 @Injectable()
 export class RunnerService {
@@ -22,6 +25,7 @@ export class RunnerService {
     private readonly adapters: AdapterRegistryService,
     private readonly policy: PolicyValidatorService,
     private readonly relayer: OneShotRelayerService,
+    private readonly validator: OneShotBundleValidator,
   ) {}
 
   async run(installationId: string, options?: { force?: boolean }): Promise<ExecutionAttempt> {
@@ -90,15 +94,10 @@ export class RunnerService {
         return (await this.attempts.findById(attempt.attemptId))!;
       }
 
-      const grant = installation.walletPermissionGrant as
-        | { delegationManager?: string; context?: string }
-        | undefined;
-      const delegation = installation.delegation as { permissionContext?: string } | undefined;
-      const delegationManager = grant?.delegationManager;
-      const permissionContext = delegation?.permissionContext ?? grant?.context ?? '';
-      if (!delegationManager || !permissionContext) {
+      const delegationContext = this.resolveDelegationContext(installation);
+      if (!delegationContext) {
         await this.attempts.updateStatus(attempt.attemptId, 'failed', {
-          error: 'missing delegationManager or permissionContext on installation',
+          error: 'missing delegation permissionContext on installation',
         });
         await this.activity.log({
           installationId,
@@ -106,41 +105,105 @@ export class RunnerService {
           userAddress: installation.userAddress,
           chainId: installation.chainId,
           type: 'execution.failed',
-          message: 'Cannot relay: missing delegationManager or permissionContext',
+          message: 'Cannot relay: missing delegation permissionContext',
         });
         await this.installations.recordFailure(installationId, 'missing delegation context');
         await this.scheduleNextRun(installation);
         return (await this.attempts.findById(attempt.attemptId))!;
       }
 
-      await this.attempts.updateStatus(attempt.attemptId, 'relaying', { policyResult });
+      const bundle = this.buildBundle(installation, delegationContext, proposedAction);
+
+      try {
+        this.validator.validateShape(bundle);
+      } catch (err) {
+        return await this.markFailed(
+          installationId,
+          attempt.attemptId,
+          installation,
+          err as AppError,
+          'Bundle shape invalid',
+        );
+      }
+
+      await this.attempts.updateStatus(attempt.attemptId, 'relaying');
+
+      let estimateContext: string;
+      let requiredPaymentAmountEstimate: string;
+      try {
+        const estimate = await this.relayer.estimate7710Transaction({
+          ...bundle,
+          context: undefined,
+        });
+        if (!estimate.success) {
+          throw new AppError(
+            ErrorCode.ONESHOT_SIMULATION_FAILED,
+            `1Shot estimate returned success=false: ${estimate.error ?? 'unknown'}`,
+            { estimate },
+          );
+        }
+        if (!estimate.context) {
+          throw new AppError(
+            ErrorCode.MISSING_ONESHOT_CONTEXT,
+            '1Shot estimate did not return a context (cannot relay without a price-lock quote)',
+            { estimate },
+          );
+        }
+        estimateContext = estimate.context;
+        requiredPaymentAmountEstimate = estimate.requiredPaymentAmount;
+      } catch (err) {
+        return await this.markFailed(
+          installationId,
+          attempt.attemptId,
+          installation,
+          err as AppError,
+          'Estimate failed',
+        );
+      }
+
+      try {
+        this.validator.validateContext(
+          estimateContext,
+          bundle.chainId,
+          this.relayer.getPaymentTokenAddress(),
+        );
+      } catch (err) {
+        return await this.markFailed(
+          installationId,
+          attempt.attemptId,
+          installation,
+          err as AppError,
+          'Quote context invalid',
+        );
+      }
+
+      await this.attempts.attachQuoteContext(attempt.attemptId, {
+        context: estimateContext,
+        requiredPaymentAmount: requiredPaymentAmountEstimate,
+        method: 'relayer_send7710Transaction',
+      });
+
       let relayResult: RelaySubmissionResult;
       try {
         relayResult = await this.relayer.relayDelegatedExecution({
           chainId: installation.chainId,
-          delegationManager,
-          permissionContext,
+          delegationManager: '',
+          permissionContext: delegationContext,
           call: {
             to: proposedAction.target,
             data: proposedAction.calldata,
             value: proposedAction.value === '0x0' ? undefined : proposedAction.value,
           },
+          context: estimateContext,
         });
       } catch (err) {
-        await this.attempts.updateStatus(attempt.attemptId, 'failed', {
-          error: (err as Error).message,
-        });
-        await this.activity.log({
+        return await this.markFailed(
           installationId,
-          attemptId: attempt.attemptId,
-          userAddress: installation.userAddress,
-          chainId: installation.chainId,
-          type: 'execution.failed',
-          message: `Relayer error: ${(err as Error).message}`,
-        });
-        await this.installations.recordFailure(installationId, (err as Error).message);
-        await this.scheduleNextRun(installation);
-        return (await this.attempts.findById(attempt.attemptId))!;
+          attempt.attemptId,
+          installation,
+          err as AppError,
+          'Send failed',
+        );
       }
 
       const finalStatus =
@@ -163,6 +226,9 @@ export class RunnerService {
           externalStatusUrl: relayResult.externalStatusUrl,
           errorCode: relayResult.errorCode,
           errorMessage: relayResult.errorMessage,
+          quoteContext: estimateContext,
+          requiredPaymentAmountEstimate,
+          method: 'relayer_send7710Transaction',
         },
       });
 
@@ -200,6 +266,58 @@ export class RunnerService {
     } finally {
       await this.installations.unlockInstallation(installationId);
     }
+  }
+
+  private async markFailed(
+    installationId: string,
+    attemptId: string,
+    installation: SkillInstallation,
+    err: AppError,
+    prefix: string,
+  ): Promise<ExecutionAttempt> {
+    await this.attempts.updateStatus(attemptId, 'failed', {
+      error: `${prefix}: ${err.message}`,
+    });
+    await this.activity.log({
+      installationId,
+      attemptId,
+      userAddress: installation.userAddress,
+      chainId: installation.chainId,
+      type: 'execution.failed',
+      message: `${prefix}: ${err.message}`,
+      metadata: { code: err.code, details: err.details },
+    });
+    await this.installations.recordFailure(installationId, err.message);
+    await this.scheduleNextRun(installation);
+    return (await this.attempts.findById(attemptId))!;
+  }
+
+  private resolveDelegationContext(installation: SkillInstallation): string {
+    const grant = installation.walletPermissionGrant as { context?: string } | undefined;
+    const delegation = installation.delegation as { permissionContext?: string } | undefined;
+    return delegation?.permissionContext ?? grant?.context ?? '';
+  }
+
+  private buildBundle(
+    installation: SkillInstallation,
+    permissionContext: string,
+    proposedAction: { target: string; calldata: string; value: string },
+  ) {
+    return {
+      chainId: installation.chainId,
+      transactions: [
+        {
+          permissionContext: this.validator.parsePermissionContextString(permissionContext),
+          executions: [
+            {
+              target: proposedAction.target,
+              value: proposedAction.value === '0x0' ? '0x0' : proposedAction.value,
+              data: proposedAction.calldata,
+            },
+          ],
+        },
+      ],
+    };
   }
 
   private async scheduleNextRun(installation: SkillInstallation): Promise<void> {

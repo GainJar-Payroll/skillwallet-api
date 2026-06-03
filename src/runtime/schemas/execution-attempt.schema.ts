@@ -18,7 +18,7 @@ export const RELAY_STATUS_CODES = [100, 110, 200, 400, 500] as const;
 export type RelayStatusCode = (typeof RELAY_STATUS_CODES)[number];
 
 // 1Shot / EIP-1193 error codes
-export const RELAY_ERROR_CODES = [4200, 4202, 4204, 4210, 4211] as const;
+export const RELAY_ERROR_CODES = [4001, 4200, 4202, 4204, 4210, 4211] as const;
 export type RelayErrorCode = (typeof RELAY_ERROR_CODES)[number];
 
 export type ExecutionAttemptDocument = HydratedDocument<ExecutionAttempt>;
@@ -88,6 +88,18 @@ export class RelayRecord {
 
   /** URL where the user can watch the task on 1Shot's UI */
   @Prop() externalStatusUrl?: string;
+
+  /** Signed price-lock quote from `relayer_estimate7710Transaction`. Persisted
+   *  at send-time so the audit trail can prove the exact fee context the bundle
+   *  was relayed against. */
+  @Prop() quoteContext?: string;
+
+  /** Required fee in paymentTokenAddress atomic units from the estimate. */
+  @Prop() requiredPaymentAmountEstimate?: string;
+
+  /** 1Shot method used for the relay send (`relayer_send7710Transaction`
+   *  | `relayer_sendTransaction` | `…`). */
+  @Prop() method?: string;
 }
 
 export const RelayRecordSchema = SchemaFactory.createForClass(RelayRecord);

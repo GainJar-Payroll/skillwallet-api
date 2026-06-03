@@ -30,6 +30,39 @@ export class ExecutorsService {
     return this.executorModel.findOne({ chainId, status: 'active' }).lean();
   }
 
+  async ensureBuiltInsSeeded(): Promise<void> {
+    // Get all supported chain IDs from DCA skill (MVP 1: DCA defines the chains)
+    const supportedChainIds = [1, 10, 56, 130, 137, 143, 146, 8453, 11155111, 42161, 42220, 59144];
+    const executorAddress =
+      process.env.EXECUTOR_ADDRESS || '0x62ec02AC72f8cA92A03065C9C19a95a7D94CE42e';
+
+    for (const chainId of supportedChainIds) {
+      const existing = await this.executorModel.findOne({ chainId, status: 'active' }).lean();
+      if (existing) {
+        continue; // Already seeded
+      }
+
+      // Map chain ID to delegation manager address
+      let delegationManagerAddress: string | undefined;
+      if (chainId === 11155111) {
+        delegationManagerAddress = '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3'; // Sepolia v1.3.0
+      } else if (chainId === 8453) {
+        delegationManagerAddress = '0xdb9644369c79C3633cDE70D2Df50d827D7dC7Dbc'; // Base
+      }
+      // For other chains, delegationManagerAddress remains undefined (to be set later)
+
+      await this.executorModel.create({
+        adapter: 'multi',
+        chainId,
+        executorAddress,
+        executorAddressNormalized: normalizeAddress(executorAddress),
+        delegationManagerAddress,
+        status: 'active',
+        metadata: {},
+      });
+    }
+  }
+
   async create(input: CreateExecutorDto): Promise<ExecutorRegistry> {
     const existing = await this.executorModel.findOne({ chainId: input.chainId });
     if (existing) {

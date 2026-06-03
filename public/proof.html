@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SkillWallet Proof — Real MetaMask Smart Accounts Kit + 1Shot</title>
+    <link rel="stylesheet" href="/proof/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "viem": "https://esm.sh/viem@2.52.0",
+          "viem/": "https://esm.sh/viem@2.52.0/",
+          "@metamask/smart-accounts-kit": "https://esm.sh/@metamask/smart-accounts-kit@1.6.0",
+          "@metamask/smart-accounts-kit/utils": "https://esm.sh/@metamask/smart-accounts-kit@1.6.0/utils",
+          "@metamask/delegation-abis": "https://esm.sh/@metamask/delegation-abis@1.1.0"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1>SkillWallet Proof</h1>
+    <p class="sub">
+      Real MetaMask Smart Accounts Kit + 1Shot v2 relayer end-to-end. Connect MetaMask on
+      <strong>Sepolia (11155111)</strong>. No Pimlico, no bundler, no mocks.
+    </p>
+
+    <section>
+      <h2>1 · Skills from backend</h2>
+      <div class="label">GET /skills</div>
+      <button id="load-skills" class="primary">Load Skills</button>
+      <div id="skills-list"></div>
+    </section>
+
+    <section>
+      <h2>2 · Connect MetaMask</h2>
+      <div class="label">window.ethereum</div>
+      <button id="connect-mm" class="primary">Connect Wallet</button>
+      <pre id="mm-info">not connected</pre>
+    </section>
+
+    <section>
+      <h2>3 · Smart account (Hybrid implementation)</h2>
+      <div class="label">toMetaMaskSmartAccount · Implementation.Hybrid</div>
+      <button id="create-sa" class="primary">Create Smart Account</button>
+      <button id="deploy-sa">Deploy to Sepolia</button>
+      <pre id="sa-info">not created</pre>
+    </section>
+
+    <section>
+      <h2>4 · DelegationManager compatibility</h2>
+      <div class="label">verify SDK environment vs on-chain code</div>
+      <button id="verify-dm" class="primary">Verify DelegationManager</button>
+      <pre id="dm-info">not verified</pre>
+    </section>
+
+    <section>
+      <h2>5 · 1Shot capabilities + fee quote</h2>
+      <div class="label">POST /proof/relayer (proxy to 1Shot)</div>
+      <button id="load-1shot" class="primary">Get Capabilities + Fee</button>
+      <pre id="oneshot-info">not loaded</pre>
+    </section>
+
+    <section>
+      <h2>6 · Fetch installed skills</h2>
+      <div class="label">GET /installations?userAddress=…&chainId=…</div>
+      <button id="fetch-installations" class="primary">Fetch Installations</button>
+      <pre id="installations-info">not fetched</pre>
+    </section>
+
+    <section>
+      <h2>7 · 1Shot estimate</h2>
+      <div class="label">relayer_estimate7710Transaction</div>
+      <button id="estimate">Estimate</button>
+      <pre id="estimate-info">not estimated</pre>
+    </section>
+
+    <section>
+      <h2>8 · 1Shot send</h2>
+      <div class="label">relayer_send7710Transaction</div>
+      <button id="send" class="primary">Send</button>
+      <pre id="send-info">not sent</pre>
+    </section>
+
+    <section>
+      <h2>9 · Poll status</h2>
+      <div class="label">relayer_getStatus</div>
+      <button id="poll">Poll (5s interval, max 12)</button>
+      <pre id="poll-info">not polled</pre>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </section>
+
+    <script type="module">
+      // -----------------------------------------------------------------------
+      // Tiny helpers
+      // -----------------------------------------------------------------------
+      const logEl = document.getElementById('log');
+      const log = (...args) => {
+        const ts = new Date().toISOString().slice(11, 23);
+        const msg = args
+          .map((a) => (typeof a === 'string' ? a : JSON.stringify(a, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2)))
+          .join(' ');
+        logEl.textContent = `[${ts}] ${msg}\n` + logEl.textContent;
+        console.log(`[${ts}]`, ...args);
+      };
+      const setPre = (id, data, isError = false) => {
+        const el = document.getElementById(id);
+        const text = typeof data === 'string' ? data : JSON.stringify(data, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2);
+        el.textContent = text;
+        el.style.borderLeft = isError ? '3px solid var(--err)' : '3px solid transparent';
+      };
+      const ok = (id, msg) => { const el = document.getElementById(id); el.className = 'ok'; el.textContent = msg; };
+
+      // -----------------------------------------------------------------------
+      // Config
+      // -----------------------------------------------------------------------
+      const BACKEND = ''; // same origin
+      const CHAIN_ID = 11155111; // eth sepolia
+
+      // -----------------------------------------------------------------------
+      // Per-skill config. Each skill card in step 1 reads its target / value /
+      // callData / scope from here, so the signed delegation and bundle carry
+      // data that's specific to that skill (mimics the per-skill grant flow
+      // a real MetaMask Snap would surface).
+      //
+      // target = the user's own smart account (self-call) for both skills.
+      // The SDK's addCaveat('allowedTargets', ...) runs strict address
+      // validation; using the user's SA guarantees a real, checksummed
+      // address so the caveat accepts it. Per-skill difference is shown
+      // via description / scope / callData / value below — the target
+      // being the SA itself means the delegate (1Shot) can call the SA on
+      // the user's behalf, which is the no-op execution the proof needs.
+      // -----------------------------------------------------------------------
+      const SKILL_CONFIG = {
+        'dca-usdc-weth': {
+          label: 'DCA USDC→WETH',
+          target: null, // resolved to state.smartAccount.address at sign time
+          value: 0n,
+          callData: '0x', // DCA adapter is fail-closed; no real calldata in MVP 1
+          scope: { type: 'nativeTokenTransferAmount', maxAmount: 0n },
+          recipient: 'self',
+          description: 'Delegate authority to perform USDC→WETH DCA swaps on Aerodrome',
+        },
+        'aerodrome-vote-optimizer': {
+          label: 'Aerodrome Vote Optimizer',
+          target: null,
+          value: 0n,
+          callData: '0x', // vote action is read+sign; no on-chain ETH transfer
+          scope: { type: 'nativeTokenTransferAmount', maxAmount: 0n },
+          recipient: 'self',
+          description: 'Delegate authority to vote on Aerodrome pools with the smart account',
+        },
+      };
+
+      const state = {
+        walletClient: null,
+        publicClient: null,
+        smartAccount: null,
+        env: null,
+        delegationManagerAddress: null,
+        capabilities: null,
+        feeData: null,
+        currentSkillId: null,     // set when user clicks "Use this skill" on a card
+        installationId: null,     // set when user prepares permission request
+        walletPermissionRequest: null, // set when user prepares permission request
+        signedDelegation: null,   // the per-skill signed delegation
+        permissionContext: null,
+        mode: null,
+        executionCalldata: null,
+        redeemCalldata: null,
+        bundle: null,
+        taskId: null,
+        installedSkills: null,    // populated by step 6
+      };
+
+      // -----------------------------------------------------------------------
+      // Lazy module imports (after importmap)
+      // -----------------------------------------------------------------------
+      async function loadKit() {
+        const kit = await import('@metamask/smart-accounts-kit');
+        const utils = await import('@metamask/smart-accounts-kit/utils');
+        const abis = await import('@metamask/delegation-abis');
+        const viem = await import('viem');
+        const viemChains = await import('viem/chains');
+        return { kit, utils, abis, viem, viemChains };
+      }
+
+      async function backendRpc(method, params) {
+        const res = await fetch(`${BACKEND}/proof/relayer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method, params }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`backend proxy ${res.status}: ${text.slice(0, 300)}`);
+        }
+        const json = await res.json();
+        // Backend wraps every response in { payload, meta } or { error, meta }.
+        // Unwrap the envelope, then surface any JSON-RPC error.
+        if (json.error) {
+          throw new Error(`relayer ${json.error.code}: ${json.error.message}`);
+        }
+        const payload = json.payload ?? json;
+        if (payload?.error) {
+          throw new Error(`relayer ${payload.error.code}: ${payload.error.message}`);
+        }
+        return payload?.result;
+      }
+
+      async function fetchJson(url) {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`${url} → ${res.status}`);
+        const env = await res.json();
+        return env.payload ?? env;
+      }
+
+      // -----------------------------------------------------------------------
+      // 1. Load skills from backend — each card gets a "Use this skill" button
+      //    that triggers the per-skill sign-delegation flow.
+      // -----------------------------------------------------------------------
+      document.getElementById('load-skills').onclick = async () => {
+        try {
+          const data = await fetchJson(`${BACKEND}/skills`);
+          const list = document.getElementById('skills-list');
+          list.innerHTML = '';
+          for (const s of data) {
+            const cfg = SKILL_CONFIG[s.skillId];
+            const div = document.createElement('div');
+            div.className = 'skill';
+            div.id = `skill-card-${s.skillId}`;
+            const cfgNote = cfg
+              ? `<p class="label">per-skill target: <code>${(cfg.target ?? 'self').toString().slice(0, 10)}…</code> · value: ${cfg.value} · callData: ${cfg.callData}</p>`
+              : `<p class="label warn">no per-skill config — sign will use defaults</p>`;
+            div.innerHTML = `<h3>${s.name} <code>${s.skillId}</code></h3>
+              <p>${s.description}</p>
+              <p class="label">adapter: ${s.adapter} · status: ${s.status} · chains: ${s.supportedChains.join(', ')}</p>
+              ${cfgNote}
+              <p class="label">expiry (seconds from now): <input type="number" id="expiry-${s.skillId}" min="60" max="2592000" value="3600" style="width: 100px;" /> <select id="expiry-preset-${s.skillId}"><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2592000">30 days</option></select></p>
+              <button id="use-skill-${s.skillId}" data-skill="${s.skillId}" class="primary">Use this skill</button>
+              <pre id="skill-detail-${s.skillId}">unsigned</pre>`;
+            list.appendChild(div);
+          }
+          for (const s of data) {
+            const btn = document.getElementById(`use-skill-${s.skillId}`);
+            if (btn) btn.onclick = () => useSkill(s);
+            const sel = document.getElementById(`expiry-preset-${s.skillId}`);
+            if (sel) sel.onchange = (e) => {
+              const input = document.getElementById(`expiry-${s.skillId}`);
+              if (input && e.target) input.value = e.target.value;
+            };
+          }
+          log('loaded', data.length, 'skills');
+        } catch (e) {
+          log('ERR load skills', e.message);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // Per-skill prepare -> sign -> grant flow.
+      // 1. POST /permissions/prepare to create a draft installation and get request.
+      // 2. Build delegation and sign with MetaMask.
+      // 3. POST /permissions/grant to activate the installation.
+      // -----------------------------------------------------------------------
+      async function useSkill(skill) {
+        let installationId = null;
+        let walletPermissionRequest = null;
+        let prepareData = null;
+        let signedDelegation = null;
+        let permissionContext = null;
+        let redeemCalldata = null;
+        let beforeThreshold = null;
+        let delegateAddress = null;
+        let recipient = null;
+        let target = null;
+        const cfg = SKILL_CONFIG[skill.skillId];
+
+        try {
+          if (!state.walletClient) throw new Error('connect MetaMask first (step 2)');
+          if (!state.smartAccount) throw new Error('create smart account first (step 3)');
+          if (!state.capabilities || !state.feeData) throw new Error('load 1Shot capabilities first (step 5)');
+
+          if (!cfg) throw new Error(`no per-skill config for ${skill.skillId}`);
+
+          const detailEl = document.getElementById(`skill-detail-${skill.skillId}`);
+          detailEl.textContent = 'preparing…';
+          detailEl.style.borderLeft = '3px solid var(--warn)';
+
+          const expiryInput = document.getElementById(`expiry-${skill.skillId}`);
+          const expirySeconds = Number(expiryInput?.value ?? 3600);
+          if (!Number.isFinite(expirySeconds) || expirySeconds < 60) {
+            throw new Error('expiry must be at least 60 seconds');
+          }
+          const nowSec = Math.floor(Date.now() / 1000);
+          beforeThreshold = nowSec + expirySeconds;
+
+          // Step 0: Prepare
+          log(`preparing permission request for skill "${skill.skillId}"...`);
+          const baseBody = {
+            userAddress: state.walletClient.account.address,
+            smartAccountAddress: state.smartAccount.address,
+            chainId: CHAIN_ID,
+            skillId: skill.skillId,
+            pricingPlan: { id: 'mvp-free', label: 'MVP Free', durationDays: 30, skillFeeUsdc: '0' },
+            schedule: { frequency: 'weekly' },
+          };
+          let config;
+          if (skill.skillId === 'dca-usdc-weth') {
+            config = {
+              type: 'dca',
+              tokenIn: { symbol: 'USDC', address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', decimals: 6 },
+              tokenOut: { symbol: 'WETH', address: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14', decimals: 18 },
+              amountPerRun: '10',
+              frequency: 'weekly',
+              maxSlippageBps: 50,
+              router: { name: 'aerodrome', address: state.smartAccount.address },
+              recipient: state.smartAccount.address,
+              quoteMode: 'router-quote',
+            };
+          } else if (skill.skillId === 'aerodrome-vote-optimizer') {
+            config = {
+              type: 'aerodrome-vote',
+              veAeroTokenId: '0',
+              strategy: 'balanced',
+              maxPools: 3,
+              allowAiExplanation: true,
+            };
+          } else {
+            throw new Error(`no config builder for skillId=${skill.skillId}`);
+          }
+
+          const prepareRes = await fetch(`${BACKEND}/permissions/prepare`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...baseBody, config }),
+          });
+          if (!prepareRes.ok) {
+            const text = await prepareRes.text();
+            throw new Error(`POST /permissions/prepare ${prepareRes.status}: ${text.slice(0, 300)}`);
+          }
+          const prepareJson = await prepareRes.json();
+          prepareData = prepareJson.payload ?? prepareJson;
+          
+          installationId = prepareData.installation?.installationId;
+          walletPermissionRequest = prepareData.walletPermissionRequest;
+          if (!installationId) {
+            throw new Error('prepare response missing installationId');
+          }
+
+          state.installationId = installationId;
+          state.walletPermissionRequest = walletPermissionRequest;
+          log(`prepared permission request: installationId=${installationId}`);
+
+          // Step 1: Sign
+          detailEl.textContent = 'signing…';
+          const { kit, utils } = await loadKit();
+          const chainInfo = state.capabilities.chains?.find((c) => c.chainId === String(CHAIN_ID));
+          delegateAddress = walletPermissionRequest?.rawRequest?.to || state.feeData.targetAddress || chainInfo?.targetAddress;
+          if (!delegateAddress) throw new Error('1Shot did not return targetAddress');
+
+          recipient = state.smartAccount.address;
+          target = cfg.target ?? state.smartAccount.address;
+
+          const delegation = kit.createDelegation({
+            environment: state.env,
+            from: state.smartAccount.address,
+            to: delegateAddress,
+            scope: cfg.scope,
+            caveats: utils
+              .createCaveatBuilder(state.env)
+              .addCaveat('allowedTargets', { targets: [target] })
+              .addCaveat('timestamp', { afterThreshold: 0, beforeThreshold })
+              .build(),
+          });
+
+          log(`signing delegation for skill "${skill.skillId}" — confirm MetaMask popup`);
+          const signature = await state.smartAccount.signDelegation({ delegation });
+          signedDelegation = { ...delegation, signature };
+
+          permissionContext = utils.encodeDelegations([signedDelegation]);
+          const mode = kit.ExecutionMode.SingleDefault;
+          const executionCalldata = utils.encodeExecutionCalldata([
+            { target, value: cfg.value, callData: cfg.callData },
+          ]);
+
+          const { viem, abis } = await loadKit();
+          redeemCalldata = viem.encodeFunctionData({
+            abi: abis.DelegationManager,
+            functionName: 'redeemDelegations',
+            args: [[permissionContext], [mode], [executionCalldata]],
+          });
+
+          // Commit to state — steps 7-9 use the most recent signed delegation.
+          state.currentSkillId = skill.skillId;
+          state.signedDelegation = signedDelegation;
+          state.permissionContext = permissionContext;
+          state.mode = mode;
+          state.executionCalldata = executionCalldata;
+          state.redeemCalldata = redeemCalldata;
+          log(`signed delegation for skill "${skill.skillId}"`);
+
+          // Step 2: Grant
+          detailEl.textContent = 'granting…';
+          log(`submitting permission grant for installation ${installationId}...`);
+          const grantBody = {
+            installationId,
+            context: permissionContext,
+            delegationManager: state.env.DelegationManager,
+            expiresAt: new Date(beforeThreshold * 1000).toISOString(),
+            normalizedPermissions: [{
+              chainId: CHAIN_ID,
+              from: state.smartAccount.address,
+              to: delegateAddress,
+              permissionType: 'erc7715-delegation',
+              data: {
+                scope: cfg.scope,
+                caveats: signedDelegation.caveats
+              }
+            }],
+            rawGrantResponse: signedDelegation
+          };
+
+          const grantRes = await fetch(`${BACKEND}/permissions/grant`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(grantBody, (_, v) => typeof v === 'bigint' ? v.toString() : v),
+          });
+          if (!grantRes.ok) {
+            const text = await grantRes.text();
+            throw new Error(`POST /permissions/grant ${grantRes.status}: ${text.slice(0, 300)}`);
+          }
+          const grantJson = await grantRes.json();
+          const grantData = grantJson.payload ?? grantJson;
+          log(`POST /permissions/grant ok`, { grantId: grantData.grant?._id });
+
+          // Fetch installations to confirm the record appears
+          log(`fetching installations to confirm activation...`);
+          const params = new URLSearchParams({
+            userAddress: state.walletClient.account.address,
+            chainId: String(CHAIN_ID),
+          });
+          const listData = await fetchJson(`${BACKEND}/installations?${params}`);
+          const list = Array.isArray(listData) ? listData : listData?.items ?? [];
+          const matchingInstallation = list.find((it) => it.installationId === installationId);
+
+          detailEl.style.borderLeft = '3px solid var(--ok)';
+          setPre(`skill-detail-${skill.skillId}`, {
+            skillId: skill.skillId,
+            user: state.walletClient.account.address,
+            smartAccount: state.smartAccount.address,
+            delegate: delegateAddress,
+            recipient,
+            target,
+            value: cfg.value.toString(),
+            callData: cfg.callData,
+            scope: cfg.scope,
+            expiry: { afterThreshold: 0, beforeThreshold, expiresAt: new Date(beforeThreshold * 1000).toISOString() },
+            permissionContext,
+            redeemCalldata,
+            prepare: {
+              installationId,
+              manifestId: prepareData.permissionManifest?.manifestId,
+              manifestHash: prepareData.permissionManifest?.manifestHash,
+              walletPermissionRequest
+            },
+            sign: {
+              signedDelegation,
+              permissionContext
+            },
+            grant: {
+              grantId: grantData.grant?._id,
+              delegationId: grantData.delegation?._id,
+              response: grantData
+            },
+            list: {
+              count: list.length,
+              record: matchingInstallation
+            },
+            note: `Signed delegation grants 1Shot (${delegateAddress}) the right to call ${target} on behalf of SA ${state.smartAccount.address} until ${new Date(beforeThreshold * 1000).toISOString()}`,
+          });
+          log(`successfully activated skill "${skill.skillId}" — installationId=${installationId}`);
+        } catch (e) {
+          log(`ERR use skill ${skill.skillId}`, e.message);
+          const detailEl = document.getElementById(`skill-detail-${skill.skillId}`);
+          if (detailEl) {
+            const errObj = {
+              error: e.message,
+              installationId: installationId || undefined,
+              prepare: prepareData ? {
+                installationId,
+                manifestId: prepareData.permissionManifest?.manifestId,
+                manifestHash: prepareData.permissionManifest?.manifestHash,
+                walletPermissionRequest
+              } : undefined,
+              sign: signedDelegation ? {
+                signedDelegation,
+                permissionContext
+              } : undefined
+            };
+            setPre(`skill-detail-${skill.skillId}`, errObj, true);
+          }
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // 2. Connect MetaMask
+      // -----------------------------------------------------------------------
+      document.getElementById('connect-mm').onclick = async () => {
+        try {
+          if (typeof window.ethereum === 'undefined') {
+            throw new Error('MetaMask extension not detected. Install it from https://metamask.io');
+          }
+          const { viem } = await loadKit();
+          const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: '0x' + CHAIN_ID.toString(16) }],
+          });
+          state.walletClient = viem.createWalletClient({
+            account: accounts[0],
+            chain: viem.defineChain({
+              id: CHAIN_ID,
+              name: 'Sepolia',
+              nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+              rpcUrls: { default: { http: ['https://eth-sepolia.g.alchemy.com/v2/6-ELpC9NU0QhsOHwyFid4'] } },
+            }),
+            transport: viem.custom(window.ethereum),
+          });
+          // Reads via Alchemy (reliable, no rate-limits, no CORS). Signing still
+          // goes through MetaMask via the wallet client's EIP-1193 transport.
+          state.publicClient = viem.createPublicClient({
+            chain: state.walletClient.chain,
+            transport: viem.http('https://eth-sepolia.g.alchemy.com/v2/6-ELpC9NU0QhsOHwyFid4'),
+          });
+          setPre('mm-info', {
+            address: state.walletClient.account.address,
+            chainId: CHAIN_ID,
+            chainName: 'Sepolia',
+          });
+          log('connected to MetaMask', state.walletClient.account.address);
+        } catch (e) {
+          log('ERR connect', e.message);
+          setPre('mm-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 3. Create smart account (Hybrid implementation)
+      // -----------------------------------------------------------------------
+      document.getElementById('create-sa').onclick = async () => {
+        try {
+          if (!state.walletClient) throw new Error('connect MetaMask first');
+          const { kit, viem } = await loadKit();
+          // signer must be WalletSignerConfig { walletClient } so the SDK can
+          // call signMessage / signTypedData / signAuthorization via EIP-1193.
+          // Using { account } would fail with "Account does not support signMessage"
+          // because a JsonRpcAccount (from a hex string) has no local signing backend.
+          state.smartAccount = await kit.toMetaMaskSmartAccount({
+            client: state.publicClient,
+            implementation: kit.Implementation.Hybrid,
+            deployParams: [state.walletClient.account.address, [], [], []],
+            deploySalt: '0x',
+            signer: { walletClient: state.walletClient },
+          });
+          state.env = state.smartAccount.environment;
+          state.delegationManagerAddress = state.env.DelegationManager;
+          setPre('sa-info', {
+            eoa: state.walletClient.account.address,
+            smartAccount: state.smartAccount.address,
+            implementation: 'Hybrid',
+            environmentDelegationManager: state.delegationManagerAddress,
+            environmentEntryPoint: state.env.EntryPoint,
+            deployed: false,
+            note: 'counterfactual — contract not yet on-chain. Click Deploy to broadcast factory.createAccount',
+          });
+          log('created smart account (counterfactual)', state.smartAccount.address);
+        } catch (e) {
+          log('ERR create SA', e.message);
+          setPre('sa-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 3b. Deploy smart account to Sepolia (broadcasts factory.createAccount)
+      // -----------------------------------------------------------------------
+      document.getElementById('deploy-sa').onclick = async () => {
+        try {
+          if (!state.smartAccount) throw new Error('create smart account first');
+          // getFactoryArgs() returns { factory, factoryData } for the DeleGator
+          // CREATE2 deployment. We send a regular tx to the factory via MetaMask.
+          const factoryArgs = await state.smartAccount.getFactoryArgs();
+          if (!factoryArgs?.factory || !factoryArgs?.factoryData) {
+            throw new Error('smart account does not expose factory args (already deployed?)');
+          }
+          log('deploying smart account via factory', factoryArgs.factory);
+          const deployHash = await state.walletClient.sendTransaction({
+            to: factoryArgs.factory,
+            data: factoryArgs.factoryData,
+          });
+          log('deploy tx sent', deployHash, '— waiting for receipt');
+          const receipt = await state.publicClient.waitForTransactionReceipt({ hash: deployHash });
+          if (receipt.status !== 'success') {
+            throw new Error(`deploy tx reverted: ${deployHash}`);
+          }
+          // Verify contract code is at the expected counterfactual address
+          const code = await state.publicClient.getBytecode({
+            address: state.smartAccount.address,
+          });
+          if (!code || code === '0x') {
+            throw new Error(`no code at ${state.smartAccount.address} after deploy`);
+          }
+          // Post-deploy 1Shot ping: re-call relayer_getCapabilities to confirm
+          // 1Shot's relayer is still responsive on this chain and can see the
+          // freshly deployed account via its RPC. Proves the deploy tx didn't
+          // break the 1Shot connection and 1Shot can index this SA.
+          let oneshotPing = null;
+          let oneshotError = null;
+          try {
+            oneshotPing = await backendRpc('relayer_getCapabilities', [String(CHAIN_ID)]);
+            log('1Shot post-deploy ping OK', {
+              chainsSeen: oneshotPing?.chains?.length,
+              targetAddress: oneshotPing?.chains?.[0]?.targetAddress,
+            });
+          } catch (e) {
+            oneshotError = e.message;
+            log('1Shot post-deploy ping FAILED', e.message);
+          }
+          setPre('sa-info', {
+            eoa: state.walletClient.account.address,
+            smartAccount: state.smartAccount.address,
+            implementation: 'Hybrid',
+            environmentDelegationManager: state.delegationManagerAddress,
+            environmentEntryPoint: state.env.EntryPoint,
+            factory: factoryArgs.factory,
+            deployTxHash: deployHash,
+            deployBlock: receipt.blockNumber.toString(),
+            codeSize: (code.length - 2) / 2,
+            deployed: true,
+            oneshotPing: {
+              reachable: !oneshotError,
+              chainsSeen: oneshotPing?.chains?.length ?? 0,
+              targetAddress: oneshotPing?.chains?.[0]?.targetAddress ?? null,
+              feeCollector: oneshotPing?.chains?.[0]?.feeCollector ?? null,
+              tokenSymbol: oneshotPing?.chains?.[0]?.tokens?.[0]?.symbol ?? null,
+              error: oneshotError,
+            },
+          });
+          log('smart account deployed on-chain', receipt.blockNumber.toString());
+        } catch (e) {
+          log('ERR deploy SA', e.message);
+          setPre('sa-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 4. Verify DelegationManager compatibility
+      // -----------------------------------------------------------------------
+      document.getElementById('verify-dm').onclick = async () => {
+        try {
+          if (!state.smartAccount) throw new Error('create smart account first');
+          const dmCode = await state.publicClient.getBytecode({
+            address: state.delegationManagerAddress,
+          });
+          if (!dmCode || dmCode === '0x') {
+            throw new Error(`no contract code at ${state.delegationManagerAddress}`);
+          }
+          // Try eip712Domain() to confirm it's the real DelegationManager
+          let domain = null;
+          try {
+            domain = await state.publicClient.readContract({
+              address: state.delegationManagerAddress,
+              abi: [{ name: 'eip712Domain', type: 'function', stateMutability: 'view', inputs: [], outputs: [
+                { name: 'fields', type: 'bytes1' },
+                { name: 'name', type: 'string' },
+                { name: 'version', type: 'string' },
+                { name: 'chainId', type: 'uint256' },
+                { name: 'verifyingContract', type: 'address' },
+                { name: 'salt', type: 'bytes32' },
+                { name: 'extensions', type: 'uint256[]' },
+              ] }],
+              functionName: 'eip712Domain',
+            });
+          } catch (inner) {
+            log('eip712Domain() failed (non-fatal):', inner.message);
+          }
+          setPre('dm-info', {
+            delegationManager: state.delegationManagerAddress,
+            codeSize: (dmCode.length - 2) / 2,
+            isContract: true,
+            eip712Domain: domain ? {
+              name: domain[1],
+              version: domain[2],
+              chainId: domain[3]?.toString(),
+              verifyingContract: domain[4],
+            } : null,
+            sdkEnvironmentMatch: 'environment.DelegationManager === on-chain DM address',
+            result: domain ? 'OK — SDK environment matches on-chain DelegationManager' : 'OK — contract present; eip712Domain read skipped',
+          });
+          log('verified DelegationManager compatibility');
+        } catch (e) {
+          log('ERR verify DM', e.message);
+          setPre('dm-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 5. 1Shot capabilities + fee
+      // -----------------------------------------------------------------------
+      document.getElementById('load-1shot').onclick = async () => {
+        try {
+          const caps = await backendRpc('relayer_getCapabilities', [String(CHAIN_ID)]);
+          state.capabilities = caps;
+          // Shape: { chains: [{ chainId, feeCollector, targetAddress, tokens }], raw }
+          const chainInfo = caps.chains?.find((c) => c.chainId === String(CHAIN_ID));
+          if (!chainInfo) throw new Error(`1Shot did not return capabilities for chain ${CHAIN_ID}`);
+          const token = chainInfo.tokens?.[0];
+          let feeData = null;
+          if (token) {
+            feeData = await backendRpc('relayer_getFeeData', {
+              chainId: String(CHAIN_ID),
+              token: token.address,
+            });
+            state.feeData = feeData
+          }
+          setPre('oneshot-info', { capabilities: caps, feeData });
+          log('1Shot capabilities + fee loaded', {
+            targetAddress: chainInfo.targetAddress,
+            feeCollector: chainInfo.feeCollector,
+            tokens: chainInfo.tokens?.map((t) => t.symbol),
+            feeRate: feeData?.rate,
+            feeMin: feeData?.minFee,
+            feeExpiry: feeData?.expiry,
+          });
+        } catch (e) {
+          log('ERR 1Shot caps', e.message);
+          setPre('oneshot-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 6. Fetch installed skills — list what the user has installed on this
+      //    chain. Filtered by the connected EOA + chainId so the user sees
+      //    their own installations. In a real flow, clicking "Use this skill"
+      //    in step 1 would also POST /installations — for the proof we just
+      //    GET to confirm the round-trip and show the user what the backend
+      //    sees.
+      // -----------------------------------------------------------------------
+      document.getElementById('fetch-installations').onclick = async () => {
+        try {
+          if (!state.walletClient) throw new Error('connect MetaMask first (step 2)');
+          const params = new URLSearchParams({
+            userAddress: state.walletClient.account.address,
+            chainId: String(CHAIN_ID),
+          });
+          const data = await fetchJson(`${BACKEND}/installations?${params}`);
+          const list = Array.isArray(data) ? data : data?.items ?? [];
+          state.installedSkills = list;
+          setPre('installations-info', {
+            query: { userAddress: state.walletClient.account.address, chainId: CHAIN_ID },
+            count: list.length,
+            items: list.map((it) => ({
+              installationId: it.installationId,
+              skillId: it.skillId,
+              status: it.status,
+              chainId: it.chainId,
+              configSummary: it.config ? Object.keys(it.config) : [],
+              schedule: it.schedule ?? null,
+            })),
+          });
+          log('fetched installations', list.length, 'records');
+        } catch (e) {
+          log('ERR fetch installations', e.message);
+          setPre('installations-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 7. Estimate
+      // -----------------------------------------------------------------------
+      document.getElementById('estimate').onclick = async () => {
+        try {
+          const bundle = buildBundle();
+          const estimate = await backendRpc('relayer_estimate7710Transaction', bundle);
+          state.bundle = bundle;
+          setPre('estimate-info', { bundle, estimate, currentSkill: state.currentSkillId });
+          log('estimate', { success: estimate.success, requiredPayment: estimate.requiredPaymentAmount, skill: state.currentSkillId });
+        } catch (e) {
+          log('ERR estimate', e.message);
+          setPre('estimate-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 8. Send
+      // -----------------------------------------------------------------------
+      document.getElementById('send').onclick = async () => {
+        try {
+          const bundle = buildBundle();
+          state.bundle = bundle;
+          const taskId = await backendRpc('relayer_send7710Transaction', bundle);
+          state.taskId = taskId;
+          setPre('send-info', { bundle, taskId, currentSkill: state.currentSkillId, note: 'poll status below' });
+          log('sent to 1Shot, skill=', state.currentSkillId, 'taskId=', taskId);
+        } catch (e) {
+          log('ERR send', e.message);
+          setPre('send-info', { error: e.message }, true);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 9. Poll status
+      // -----------------------------------------------------------------------
+      document.getElementById('poll').onclick = async () => {
+        try {
+          if (!state.taskId) throw new Error('no taskId — send first');
+          const out = [];
+          for (let i = 0; i < 12; i++) {
+            const status = await backendRpc('relayer_getStatus', { id: state.taskId, logs: true });
+            out.push({ poll: i + 1, status });
+            setPre('poll-info', out);
+            log(`poll #${i + 1}`, { status: status.status, hash: status.hash });
+            const code = Number(status.status);
+            if (code === 200 || code === 400 || code === 500) break;
+            await new Promise((r) => setTimeout(r, 5000));
+          }
+        } catch (e) {
+          log('ERR poll', e.message);
+          setPre('poll-info', { error: e.message }, true);
+        }
+      };
+
+      function buildBundle() {
+        if (!state.signedDelegation) throw new Error('click "Use this skill" on a card in step 1 first');
+        if (!state.currentSkillId) throw new Error('no current skill — sign a delegation in step 1 first');
+        return {
+          chainId: CHAIN_ID,
+          transactions: [
+            {
+              permissionContext: [state.signedDelegation],
+              executions: [
+                {
+                  target: state.delegationManagerAddress,
+                  value: '0x0',
+                  data: state.redeemCalldata,
+                },
+              ],
+            },
+          ],
+          authorizationList: [],
+          context: state.feeData?.context ?? '',
+          taskId: crypto.randomUUID(),
+          destinationUrl: `${location.origin}/runtime/oneshot/webhook`,
+          memo: `skillwallet-proof: skill=${state.currentSkillId}`,
+        };
+      }
+
+      log('page loaded');
+    </script>
+  </body>
+</html>

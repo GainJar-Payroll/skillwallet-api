@@ -133,6 +133,20 @@ export const builtInChains: ChainConfig[] = [
     metadata: { tier: 'mainnet', nativeSymbol: 'ETH', blockExplorer: 'https://basescan.org' },
   }),
   entry({
+    chainId: 11155111,
+    name: 'Ethereum Sepolia',
+    slug: 'ethereum-sepolia',
+    rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/demo',
+    usdcAddress: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+    delegationManagerAddress: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3',
+    metadata: {
+      tier: 'testnet-only',
+      nativeSymbol: 'ETH',
+      blockExplorer: 'https://sepolia.etherscan.io',
+      notes: 'MetaMask Smart Accounts Kit testnet (v1.3.0 delegation framework)',
+    },
+  }),
+  entry({
     chainId: 42161,
     name: 'Arbitrum One',
     slug: 'arbitrum-one',
