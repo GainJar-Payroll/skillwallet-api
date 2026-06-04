@@ -27,6 +27,8 @@ const statusByCode: Record<ErrorCode, HttpStatus> = {
   [ErrorCode.ONESHOT_INSUFFICIENT_PAYMENT]: HttpStatus.PAYMENT_REQUIRED,
   [ErrorCode.ONESHOT_SIMULATION_FAILED]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ErrorCode.ONESHOT_INVALID_AUTHORIZATION_LIST]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.TOKEN_NOT_ALLOWED]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [ErrorCode.SELF_SWAP_REJECTED]: HttpStatus.BAD_REQUEST,
 };
 
 export class AppError extends HttpException {

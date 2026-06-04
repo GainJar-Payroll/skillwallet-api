@@ -6,11 +6,11 @@ const DCA_SUPPORTED_CHAINS = [
 
 export const builtInSkills: CreateSkillDefinitionDto[] = [
   {
-    skillId: 'dca-usdc-weth',
-    slug: 'dca-usdc-weth',
-    name: 'DCA USDC → WETH',
+    skillId: 'dca-generic',
+    slug: 'dca-generic',
+    name: 'DCA (Generic)',
     description:
-      'Automated dollar-cost averaging from USDC to WETH on Base. Spend a fixed USDC amount per period and receive WETH back to your smart account. Supported on Ethereum, Linea, Arbitrum, Optimism, BNB Chain, Base, Polygon, Sonic, Unichain, Monad, and Celo.',
+      'Automated dollar-cost averaging between any two ERC-20 tokens. Pick a tokenIn/tokenOut pair at install time; the skill spends a fixed tokenIn amount per period and routes to tokenOut back to your smart account. v1 allowlist: Sepolia = USDC, WETH. Set allowCustomToken=true to opt out of the allowlist (use with care). Supported on Ethereum, Linea, Arbitrum, Optimism, BNB Chain, Base, Polygon, Sonic, Unichain, Monad, and Celo.',
     adapter: 'dca',
     status: 'live',
     supportedChains: [...DCA_SUPPORTED_CHAINS],
@@ -22,20 +22,20 @@ export const builtInSkills: CreateSkillDefinitionDto[] = [
         permissionType: 'erc20-token-periodic',
         requiredRuleTypes: ['expiry'],
         required: true,
-        description: 'Spend limited USDC per period for scheduled DCA.',
+        description: 'Spend limited tokenIn per period for scheduled DCA.',
       },
       {
         chainId: 8453,
         permissionType: 'erc20-token-periodic',
         requiredRuleTypes: ['expiry'],
         required: true,
-        description: 'Spend limited USDC per period for scheduled DCA.',
+        description: 'Spend limited tokenIn per period for scheduled DCA.',
       },
     ],
     permissionTemplate: {
       type: 'skillwallet.permission.v1',
       defaultSelectors: [],
-      defaultTokens: ['USDC', 'WETH'],
+      defaultTokens: [],
     },
     pricing: {
       type: 'fixed-duration',
@@ -68,7 +68,7 @@ export const builtInSkills: CreateSkillDefinitionDto[] = [
     },
     metadata: {
       icon: 'dca',
-      tags: ['dca', 'usdc', 'weth', 'multi-chain'],
+      tags: ['dca', 'generic', 'erc20', 'multi-chain'],
       riskLevel: 'medium',
     },
   },

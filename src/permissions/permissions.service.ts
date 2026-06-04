@@ -46,6 +46,7 @@ import { ErrorCode } from '../common/errors/error-codes';
 import { sha256Hex } from '../common/utils/hash';
 import { normalizeAddress } from '../common/utils/address';
 import { toChainIdHex } from '../common/utils/chain';
+import { isTokenAllowed } from '../chains/chain-token-registry';
 
 @Injectable()
 export class PermissionsService {
@@ -100,6 +101,30 @@ export class PermissionsService {
         ErrorCode.VALIDATION_ERROR,
         `Config type ${input.config.type} does not match skill adapter ${skill.adapter}`,
       );
+    }
+
+    if (input.config.type === 'dca') {
+      const { tokenIn, tokenOut, allowCustomToken } = input.config;
+      if (normalizeAddress(tokenIn.address) === normalizeAddress(tokenOut.address)) {
+        throw new AppError(
+          ErrorCode.SELF_SWAP_REJECTED,
+          `tokenIn and tokenOut must be different (got ${tokenIn.address})`,
+        );
+      }
+      if (!allowCustomToken) {
+        if (!isTokenAllowed(input.chainId, tokenIn.address)) {
+          throw new AppError(
+            ErrorCode.TOKEN_NOT_ALLOWED,
+            `tokenIn ${tokenIn.address} is not in the allowlist for chainId=${input.chainId}. Set allowCustomToken=true to opt out.`,
+          );
+        }
+        if (!isTokenAllowed(input.chainId, tokenOut.address)) {
+          throw new AppError(
+            ErrorCode.TOKEN_NOT_ALLOWED,
+            `tokenOut ${tokenOut.address} is not in the allowlist for chainId=${input.chainId}. Set allowCustomToken=true to opt out.`,
+          );
+        }
+      }
     }
 
     const executor = await this.executorModel

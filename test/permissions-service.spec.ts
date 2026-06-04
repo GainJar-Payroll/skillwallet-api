@@ -334,7 +334,7 @@ describe('PermissionsService prepareRequest projection (ERC-7715 to field)', () 
   it('projects `to: executorAddress` and `from: smartAccountAddress` in permissionRequests[0]', async () => {
     const svc = makePrepareService({
       skill: {
-        skillId: 'dca-usdc-weth',
+        skillId: 'dca-generic',
         status: 'live',
         supportedChains: [11155111],
         adapter: 'dca',
@@ -360,7 +360,7 @@ describe('PermissionsService prepareRequest projection (ERC-7715 to field)', () 
       userAddress: USER,
       smartAccountAddress: SMART_ACCOUNT,
       chainId: 11155111,
-      skillId: 'dca-usdc-weth',
+      skillId: 'dca-generic',
       config: {
         type: 'dca',
         tokenIn: {
@@ -370,7 +370,7 @@ describe('PermissionsService prepareRequest projection (ERC-7715 to field)', () 
         },
         tokenOut: {
           symbol: 'WETH',
-          address: '0xfFf9976782d46CC05630D1F6eBAb18b2324d6B14',
+          address: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
           decimals: 18,
         },
         amountPerRun: '10',
@@ -387,5 +387,232 @@ describe('PermissionsService prepareRequest projection (ERC-7715 to field)', () 
     expect(pr.from).toBe(SMART_ACCOUNT);
     expect(pr.to).toBe(EXECUTOR);
     expect(pr.chainId).toBe('0xaa36a7');
+  });
+});
+
+describe('PermissionsService prepareRequest token enforcement (Goal 2)', () => {
+  const USER = '0x1111111111111111111111111111111111111111';
+  const USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+  const WETH = '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+  const UNKNOWN = '0x4200000000000000000000000000000000000042';
+
+  function makeSvc(opts: { skill?: unknown; executor?: unknown } = {}) {
+    const installationModel = {
+      findOne: async () => null,
+      updateOne: async () => ({ modifiedCount: 0 }),
+    };
+    const skillModel = {
+      findOne: () => ({
+        lean: () =>
+          Promise.resolve(
+            opts.skill ?? {
+              skillId: 'dca-generic',
+              status: 'live',
+              supportedChains: [11155111],
+              adapter: 'dca',
+            },
+          ),
+      }),
+    };
+    const executorModel = {
+      findOne: () => ({
+        lean: () =>
+          Promise.resolve(
+            opts.executor ?? { chainId: 11155111, status: 'active', executorAddress: EXECUTOR },
+          ),
+      }),
+    };
+    const installations = {
+      findById: async () => ({ installationId: 'inst_test' }),
+      createDraft: async () => ({ installationId: 'inst_test' }),
+      setPermissionRequest: async () => undefined,
+    } as never;
+    const compiler = {
+      compileDca: () => ({
+        manifest: {},
+        manifestHash: 'hash',
+        walletRequest: { rawRequest: { permission: {}, rules: [] } },
+        requestHash: 'reqhash',
+      }),
+      compileAerodromeVote: () => ({
+        manifest: {},
+        manifestHash: 'hash',
+        walletRequest: { rawRequest: { permission: {}, rules: [] } },
+        requestHash: 'reqhash',
+      }),
+    } as never;
+    const supportChecker = { checkSupport: async () => ({}) } as never;
+    return new PermissionsService(
+      {
+        create: async () => ({
+          manifestId: 'm',
+          title: 'T',
+          summary: 'S',
+          allowedActions: [],
+          forbiddenActions: [],
+          allowedTargets: [],
+          allowedSelectors: [],
+          allowedTokens: [],
+          rules: [],
+          validUntil: new Date(Date.now() + 7 * 86400_000),
+          toObject: () => ({
+            manifestId: 'm',
+            title: 'T',
+            summary: 'S',
+            allowedActions: [],
+            forbiddenActions: [],
+            allowedTargets: [],
+            allowedSelectors: [],
+            allowedTokens: [],
+            rules: [],
+            validUntil: new Date(Date.now() + 7 * 86400_000),
+          }),
+        }),
+      } as never,
+      {
+        create: async () => ({
+          requestId: 'r',
+          toObject: () => ({ requestId: 'r' }),
+        }),
+      } as never,
+      { create: async () => ({ toObject: () => ({}) }) } as never,
+      { create: async () => ({ toObject: () => ({}) }) } as never,
+      installationModel as never,
+      skillModel as never,
+      executorModel as never,
+      compiler,
+      supportChecker,
+      installations,
+    );
+  }
+
+  function baseInput(overrides: Record<string, unknown> = {}) {
+    return {
+      userAddress: USER,
+      smartAccountAddress: SMART_ACCOUNT,
+      chainId: 11155111,
+      skillId: 'dca-generic',
+      config: {
+        type: 'dca' as const,
+        tokenIn: { symbol: 'USDC', address: USDC, decimals: 6 },
+        tokenOut: { symbol: 'WETH', address: WETH, decimals: 18 },
+        amountPerRun: '10',
+        frequency: 'weekly' as const,
+        maxSlippageBps: 50,
+        router: { name: 'uniswap' as const, address: '0x0000000000000000000000000000000000000001' },
+        recipient: SMART_ACCOUNT,
+        quoteMode: 'router-quote' as const,
+      },
+      pricingPlan: { id: 'p', label: 'L', durationDays: 7, skillFeeUsdc: '1' },
+      ...overrides,
+    };
+  }
+
+  it('rejects self-swap (tokenIn === tokenOut)', async () => {
+    const svc = makeSvc();
+    await expectThrows(
+      () =>
+        svc.prepareRequest(
+          baseInput({
+            config: {
+              type: 'dca' as const,
+              tokenIn: { symbol: 'USDC', address: USDC, decimals: 6 },
+              tokenOut: { symbol: 'USDC', address: USDC, decimals: 6 },
+              amountPerRun: '10',
+              frequency: 'weekly' as const,
+              maxSlippageBps: 50,
+              router: {
+                name: 'uniswap' as const,
+                address: '0x0000000000000000000000000000000000000001',
+              },
+              recipient: SMART_ACCOUNT,
+              quoteMode: 'router-quote' as const,
+            },
+          }),
+        ),
+      /must be different/,
+    );
+  });
+
+  it('rejects tokenIn not in allowlist (allowCustomToken false)', async () => {
+    const svc = makeSvc();
+    await expectThrows(
+      () =>
+        svc.prepareRequest(
+          baseInput({
+            config: {
+              type: 'dca' as const,
+              tokenIn: { symbol: 'FOO', address: UNKNOWN, decimals: 18 },
+              tokenOut: { symbol: 'WETH', address: WETH, decimals: 18 },
+              amountPerRun: '10',
+              frequency: 'weekly' as const,
+              maxSlippageBps: 50,
+              router: {
+                name: 'uniswap' as const,
+                address: '0x0000000000000000000000000000000000000001',
+              },
+              recipient: SMART_ACCOUNT,
+              quoteMode: 'router-quote' as const,
+            },
+          }),
+        ),
+      /tokenIn .* is not in the allowlist/,
+    );
+  });
+
+  it('rejects tokenOut not in allowlist (allowCustomToken false)', async () => {
+    const svc = makeSvc();
+    await expectThrows(
+      () =>
+        svc.prepareRequest(
+          baseInput({
+            config: {
+              type: 'dca' as const,
+              tokenIn: { symbol: 'USDC', address: USDC, decimals: 6 },
+              tokenOut: { symbol: 'FOO', address: UNKNOWN, decimals: 18 },
+              amountPerRun: '10',
+              frequency: 'weekly' as const,
+              maxSlippageBps: 50,
+              router: {
+                name: 'uniswap' as const,
+                address: '0x0000000000000000000000000000000000000001',
+              },
+              recipient: SMART_ACCOUNT,
+              quoteMode: 'router-quote' as const,
+            },
+          }),
+        ),
+      /tokenOut .* is not in the allowlist/,
+    );
+  });
+
+  it('accepts unknown token when allowCustomToken=true', async () => {
+    const svc = makeSvc();
+    const result = await svc.prepareRequest(
+      baseInput({
+        config: {
+          type: 'dca' as const,
+          tokenIn: { symbol: 'FOO', address: UNKNOWN, decimals: 18 },
+          tokenOut: { symbol: 'WETH', address: WETH, decimals: 18 },
+          amountPerRun: '10',
+          frequency: 'weekly' as const,
+          maxSlippageBps: 50,
+          router: {
+            name: 'uniswap' as const,
+            address: '0x0000000000000000000000000000000000000001',
+          },
+          recipient: SMART_ACCOUNT,
+          quoteMode: 'router-quote' as const,
+          allowCustomToken: true,
+        },
+      }),
+    );
+    expect(result.permissionRequests).toHaveLength(1);
+  });
+
+  it('accepts Sepolia allowlist pair USDC→WETH', async () => {
+    const svc = makeSvc();
+    const result = await svc.prepareRequest(baseInput());
+    expect(result.permissionRequests).toHaveLength(1);
   });
 });

@@ -5,14 +5,14 @@ const addressField = z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid EV
 const dcaConfigSchema = z.object({
   type: z.literal('dca'),
   tokenIn: z.object({
-    symbol: z.literal('USDC'),
+    symbol: z.string().min(2).max(20),
     address: addressField,
-    decimals: z.literal(6),
+    decimals: z.number().int().min(0).max(36),
   }),
   tokenOut: z.object({
-    symbol: z.literal('WETH'),
+    symbol: z.string().min(2).max(20),
     address: addressField,
-    decimals: z.literal(18),
+    decimals: z.number().int().min(0).max(36),
   }),
   amountPerRun: z.string().regex(/^\d+(\.\d+)?$/),
   frequency: z.enum(['daily', 'weekly', 'monthly']),
@@ -27,6 +27,7 @@ const dcaConfigSchema = z.object({
     .string()
     .regex(/^\d+(\.\d+)?$/)
     .optional(),
+  allowCustomToken: z.boolean().optional(),
 });
 
 const aerodromeVoteConfigSchema = z.object({
