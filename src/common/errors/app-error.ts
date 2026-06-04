@@ -29,6 +29,9 @@ const statusByCode: Record<ErrorCode, HttpStatus> = {
   [ErrorCode.ONESHOT_INVALID_AUTHORIZATION_LIST]: HttpStatus.BAD_REQUEST,
   [ErrorCode.TOKEN_NOT_ALLOWED]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ErrorCode.SELF_SWAP_REJECTED]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.ADAPTER_NOT_ALLOWED_ADJUSTMENT]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [ErrorCode.OVER_ATTENUATION]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [ErrorCode.ATTENUATION_MISMATCH]: HttpStatus.UNPROCESSABLE_ENTITY,
 };
 
 export class AppError extends HttpException {

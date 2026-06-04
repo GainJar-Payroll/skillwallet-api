@@ -272,7 +272,16 @@ export class PermissionsService {
       }
     }
 
-    this.verifyAttenuation(requestedPermission, input.permissionResponses, installation);
+    const executor = await this.executorModel
+      .findOne({ chainId: installation.chainId, status: 'active' })
+      .lean();
+    const expectedDelegationManager = executor?.delegationManagerAddress as string | undefined;
+    this.verifyAttenuation(
+      requestedPermission,
+      input.permissionResponses,
+      installation,
+      expectedDelegationManager,
+    );
 
     const grantedAt = new Date();
     const expiresAt = this.computeExpiresAt(input.permissionResponses, installation);
@@ -459,38 +468,76 @@ export class PermissionsService {
 
   private verifyAttenuation(
     requestedPermission: Record<string, unknown>,
-    responses: Array<{ permission: Record<string, unknown>; isAdjustmentAllowed?: boolean }>,
+    responses: Array<{
+      permission: Record<string, unknown>;
+      isAdjustmentAllowed?: boolean;
+      delegationManager?: string;
+    }>,
     installation: SkillInstallation,
+    expectedDelegationManager?: string,
   ): void {
     const type = String(requestedPermission.type ?? '');
     if (type !== 'erc20-token-periodic') {
       return;
     }
     const requestedData = (requestedPermission.data ?? {}) as Record<string, unknown>;
+    const requestedIsAdjustmentAllowed = requestedPermission.isAdjustmentAllowed === true;
     const requestedAmount = BigInt(String(requestedData.periodAmount ?? '0'));
     const requestedDuration = Number(requestedData.periodDuration ?? 0);
+    const requestedToken = String(requestedData.tokenAddress ?? '').toLowerCase();
 
     for (const response of responses) {
       const responsePermission = (response.permission ?? {}) as Record<string, unknown>;
-      if (responsePermission.isAdjustmentAllowed === true) {
-        throw new AppError(
-          ErrorCode.VALIDATION_ERROR,
-          'PermissionResponse.permission.isAdjustmentAllowed=true is not accepted; backend never broadens user grants',
-        );
-      }
       const responseData = (responsePermission.data ?? {}) as Record<string, unknown>;
+      const responseIsAdjustmentAllowed = responsePermission.isAdjustmentAllowed === true;
       const grantedAmount = BigInt(String(responseData.periodAmount ?? '0'));
       const grantedDuration = Number(responseData.periodDuration ?? 0);
+      const grantedToken = String(responseData.tokenAddress ?? '').toLowerCase();
+
+      if (!requestedIsAdjustmentAllowed && responseIsAdjustmentAllowed) {
+        throw new AppError(
+          ErrorCode.ADAPTER_NOT_ALLOWED_ADJUSTMENT,
+          `PermissionResponse.permission.isAdjustmentAllowed=true is not accepted; backend never broadens user grants for installation ${installation.installationId}`,
+        );
+      }
+
       if (grantedAmount > requestedAmount) {
         throw new AppError(
-          ErrorCode.VALIDATION_ERROR,
+          ErrorCode.OVER_ATTENUATION,
           `PermissionResponse periodAmount ${grantedAmount} exceeds requested ${requestedAmount} for installation ${installation.installationId}`,
         );
       }
-      if (grantedDuration > 0 && requestedDuration > 0 && grantedDuration > requestedDuration) {
+
+      if (grantedAmount < 0n) {
+        throw new AppError(ErrorCode.OVER_ATTENUATION, `grantedAmount must be non-negative`);
+      }
+
+      if (grantedDuration > 0 && requestedDuration > 0 && grantedDuration < requestedDuration) {
         throw new AppError(
-          ErrorCode.VALIDATION_ERROR,
-          `PermissionResponse periodDuration ${grantedDuration} exceeds requested ${requestedDuration}`,
+          ErrorCode.OVER_ATTENUATION,
+          `PermissionResponse periodDuration ${grantedDuration} is shorter than requested ${requestedDuration} (attacker-friendly tightening rejected)`,
+        );
+      }
+
+      if (grantedDuration < 0) {
+        throw new AppError(ErrorCode.OVER_ATTENUATION, `grantedDuration must be non-negative`);
+      }
+
+      if (grantedToken && requestedToken && grantedToken !== requestedToken) {
+        throw new AppError(
+          ErrorCode.ATTENUATION_MISMATCH,
+          `granted tokenAddress ${grantedToken} does not match requested ${requestedToken}`,
+        );
+      }
+
+      if (
+        expectedDelegationManager &&
+        response.delegationManager &&
+        response.delegationManager.toLowerCase() !== expectedDelegationManager.toLowerCase()
+      ) {
+        throw new AppError(
+          ErrorCode.ATTENUATION_MISMATCH,
+          `response delegationManager ${response.delegationManager} does not match expected ${expectedDelegationManager}`,
         );
       }
     }

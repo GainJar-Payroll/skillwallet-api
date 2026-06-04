@@ -16,7 +16,11 @@ function makeService(opts: { installation: unknown; skill: unknown; executor: un
   const executorModel = {
     findOne: () => ({ lean: () => Promise.resolve(opts.executor) }),
   };
-  const installations = { findById: async () => opts.installation } as never;
+  const installations = {
+    findById: async () => opts.installation,
+    setPermissionGrantAndActivate: async () => undefined,
+    setPermissionGrantDependencies: async () => undefined,
+  } as never;
   const compiler = {
     compileDca: () => ({ manifest: {}, walletRequest: { rawRequest: {} } }),
   } as never;
@@ -35,7 +39,7 @@ function makeService(opts: { installation: unknown; skill: unknown; executor: un
   );
 }
 
-function baseInstallation() {
+function baseInstallation(overrides?: { isAdjustmentAllowed?: boolean }) {
   return {
     installationId: 'inst_test',
     chainId: 11155111,
@@ -48,7 +52,7 @@ function baseInstallation() {
       rawRequest: {
         permission: {
           type: 'erc20-token-periodic',
-          isAdjustmentAllowed: false,
+          isAdjustmentAllowed: overrides?.isAdjustmentAllowed ?? false,
           data: {
             tokenAddress: '0x4200000000000000000000000000000000000042',
             periodAmount: '10000000',
@@ -249,6 +253,509 @@ describe('PermissionsService attenuation check', () => {
           ],
         }),
       /not awaiting permission grant/,
+    );
+  });
+});
+
+describe('PermissionsService attenuation matrix (Goal 3: isAdjustmentAllowed)', () => {
+  const executorWithDM = {
+    chainId: 11155111,
+    status: 'active',
+    executorAddress: EXECUTOR,
+    delegationManagerAddress: DELEGATION_MANAGER,
+  };
+
+  it('accepts requested=true + granted=true (same amount/duration)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expect(
+      svc.submitGrant({
+        installationId: 'inst_test',
+        permissionResponses: [
+          {
+            chainId: 11155111,
+            from: SMART_ACCOUNT,
+            permission: {
+              type: 'erc20-token-periodic',
+              isAdjustmentAllowed: true,
+              data: {
+                tokenAddress: '0x4200000000000000000000000000000000000042',
+                periodAmount: '10000000',
+                periodDuration: 604800,
+                startTime: 1700000000,
+              },
+            },
+            context: '0xdeadbeef',
+            delegationManager: DELEGATION_MANAGER,
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('accepts requested=true + granted=true + amount lowered (attenuation OK)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expect(
+      svc.submitGrant({
+        installationId: 'inst_test',
+        permissionResponses: [
+          {
+            chainId: 11155111,
+            from: SMART_ACCOUNT,
+            permission: {
+              type: 'erc20-token-periodic',
+              isAdjustmentAllowed: true,
+              data: {
+                tokenAddress: '0x4200000000000000000000000000000000000042',
+                periodAmount: '5000000',
+                periodDuration: 604800,
+                startTime: 1700000000,
+              },
+            },
+            context: '0xdeadbeef',
+            delegationManager: DELEGATION_MANAGER,
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects requested=true + granted=true + amount increased (over-attenuation)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: true,
+                data: {
+                  tokenAddress: '0x4200000000000000000000000000000000000042',
+                  periodAmount: '20000000',
+                  periodDuration: 604800,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: DELEGATION_MANAGER,
+            },
+          ],
+        }),
+      /exceeds requested/,
+    );
+  });
+
+  it('accepts requested=true + granted=true + duration longer', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expect(
+      svc.submitGrant({
+        installationId: 'inst_test',
+        permissionResponses: [
+          {
+            chainId: 11155111,
+            from: SMART_ACCOUNT,
+            permission: {
+              type: 'erc20-token-periodic',
+              isAdjustmentAllowed: true,
+              data: {
+                tokenAddress: '0x4200000000000000000000000000000000000042',
+                periodAmount: '10000000',
+                periodDuration: 1209600,
+                startTime: 1700000000,
+              },
+            },
+            context: '0xdeadbeef',
+            delegationManager: DELEGATION_MANAGER,
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects requested=true + granted=true + duration shorter (attacker-friendly)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: true,
+                data: {
+                  tokenAddress: '0x4200000000000000000000000000000000000042',
+                  periodAmount: '10000000',
+                  periodDuration: 86400,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: DELEGATION_MANAGER,
+            },
+          ],
+        }),
+      /shorter than requested/,
+    );
+  });
+
+  it('rejects requested=true + granted tokenAddress mismatch', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: true,
+                data: {
+                  tokenAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  periodAmount: '10000000',
+                  periodDuration: 604800,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: DELEGATION_MANAGER,
+            },
+          ],
+        }),
+      /tokenAddress .* does not match/,
+    );
+  });
+
+  it('rejects requested=true + granted delegationManager mismatch', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: true,
+                data: {
+                  tokenAddress: '0x4200000000000000000000000000000000000042',
+                  periodAmount: '10000000',
+                  periodDuration: 604800,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: '0x4444444444444444444444444444444444444444',
+            },
+          ],
+        }),
+      /delegationManager .* does not match/,
+    );
+  });
+
+  it('accepts requested=true + granted=false (wallet chose stricter)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expect(
+      svc.submitGrant({
+        installationId: 'inst_test',
+        permissionResponses: [
+          {
+            chainId: 11155111,
+            from: SMART_ACCOUNT,
+            permission: {
+              type: 'erc20-token-periodic',
+              isAdjustmentAllowed: false,
+              data: {
+                tokenAddress: '0x4200000000000000000000000000000000000042',
+                periodAmount: '10000000',
+                periodDuration: 604800,
+                startTime: 1700000000,
+              },
+            },
+            context: '0xdeadbeef',
+            delegationManager: DELEGATION_MANAGER,
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects requested=false + granted=true (ADAPTER_NOT_ALLOWED_ADJUSTMENT)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: false });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: true,
+                data: { periodAmount: '10000000' },
+              },
+              context: '0xdeadbeef',
+              delegationManager: DELEGATION_MANAGER,
+            },
+          ],
+        }),
+      /isAdjustmentAllowed=true/,
+    );
+  });
+
+  it('rejects requested=false + granted=false + amount increased (over-attenuation)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: false });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: false,
+                data: {
+                  tokenAddress: '0x4200000000000000000000000000000000000042',
+                  periodAmount: '99999999',
+                  periodDuration: 604800,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: DELEGATION_MANAGER,
+            },
+          ],
+        }),
+      /exceeds requested/,
+    );
+  });
+
+  it('rejects requested=false + granted=false + duration shorter (attacker-friendly)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: false });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: false,
+                data: {
+                  tokenAddress: '0x4200000000000000000000000000000000000042',
+                  periodAmount: '10000000',
+                  periodDuration: 86400,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: DELEGATION_MANAGER,
+            },
+          ],
+        }),
+      /shorter than requested/,
+    );
+  });
+
+  it('rejects requested=true + granted negative amount', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: true,
+                data: {
+                  tokenAddress: '0x4200000000000000000000000000000000000042',
+                  periodAmount: '-1',
+                  periodDuration: 604800,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: DELEGATION_MANAGER,
+            },
+          ],
+        }),
+      /non-negative/,
+    );
+  });
+
+  it('rejects requested=true + granted empty delegationManager (outer check)', async () => {
+    const installation = baseInstallation({ isAdjustmentAllowed: true });
+    const svc = makeService({
+      installation,
+      skill: {
+        skillId: 'dca-generic',
+        status: 'live',
+        supportedChains: [11155111],
+        adapter: 'dca',
+      },
+      executor: executorWithDM,
+    });
+    await expectThrows(
+      () =>
+        svc.submitGrant({
+          installationId: 'inst_test',
+          permissionResponses: [
+            {
+              chainId: 11155111,
+              from: SMART_ACCOUNT,
+              permission: {
+                type: 'erc20-token-periodic',
+                isAdjustmentAllowed: true,
+                data: {
+                  tokenAddress: '0x4200000000000000000000000000000000000042',
+                  periodAmount: '10000000',
+                  periodDuration: 604800,
+                  startTime: 1700000000,
+                },
+              },
+              context: '0xdeadbeef',
+              delegationManager: '',
+            },
+          ],
+        }),
+      /non-empty context and delegationManager/,
     );
   });
 });

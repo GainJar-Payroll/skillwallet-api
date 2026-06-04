@@ -21,6 +21,7 @@ export interface DcaCompileInput {
     recipient: Address;
     quoteMode: string;
     minAmountOut?: string;
+    isAdjustmentAllowed?: boolean;
   };
   durationDays: number;
   now?: Date;
@@ -58,6 +59,13 @@ export class PermissionCompilerService {
     const now = input.now ?? new Date();
     const validUntil = addDays(now, input.durationDays);
     const periodSeconds = frequencyToPeriodSeconds(input.config.frequency);
+    const isAdjustmentAllowed = input.config.isAdjustmentAllowed ?? true;
+    const amountPerRunBaseUnits = this.toBaseUnits(
+      input.config.amountPerRun,
+      input.config.tokenIn.decimals,
+    );
+    const maxPeriodAmount = amountPerRunBaseUnits;
+    const minPeriodDuration = periodSeconds;
 
     const rules = [
       {
@@ -169,16 +177,25 @@ export class PermissionCompilerService {
       rules,
       validAfter: now,
       validUntil,
+      permissions: [
+        {
+          type: 'erc20-token-periodic',
+          isAdjustmentAllowed,
+          maxPeriodAmount,
+          minPeriodDuration,
+          data: {
+            tokenAddress: input.config.tokenIn.address,
+            periodAmount: amountPerRunBaseUnits,
+            periodDuration: periodSeconds,
+          },
+        },
+      ],
     };
 
     const manifestHash = sha256Hex(manifestBase);
     const manifestId = `manifest_${uuidv4()}`;
     const manifest = { ...manifestBase, manifestId };
 
-    const amountPerRunBaseUnits = this.toBaseUnits(
-      input.config.amountPerRun,
-      input.config.tokenIn.decimals,
-    );
     const requestId = `req_${uuidv4()}`;
     const chainIdHex = this.toChainIdHex(input.chainId);
     const expiry = unixSeconds(validUntil);
@@ -191,7 +208,7 @@ export class PermissionCompilerService {
       expiry,
       permission: {
         type: 'erc20-token-periodic',
-        isAdjustmentAllowed: false,
+        isAdjustmentAllowed,
         data: {
           tokenAddress: input.config.tokenIn.address,
           periodAmount: amountPerRunBaseUnits,
@@ -220,7 +237,7 @@ export class PermissionCompilerService {
       permissions: [
         {
           type: 'erc20-token-periodic',
-          isAdjustmentAllowed: false,
+          isAdjustmentAllowed,
           data: rawRequest.permission.data,
         },
       ],

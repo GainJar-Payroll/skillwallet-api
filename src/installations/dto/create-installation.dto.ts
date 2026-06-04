@@ -28,6 +28,7 @@ const dcaConfigSchema = z.object({
     .regex(/^\d+(\.\d+)?$/)
     .optional(),
   allowCustomToken: z.boolean().optional(),
+  isAdjustmentAllowed: z.boolean().optional(),
 });
 
 const aerodromeVoteConfigSchema = z.object({
