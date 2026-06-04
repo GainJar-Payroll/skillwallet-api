@@ -1,385 +1,318 @@
-# DOCS.md — Working Plan for Planner Agent
+# DOCS.md — SkillWallet Backend Working State
 
-> **Purpose.** Summary of the SkillWallet backend state + a focused plan for the next 3 changes. **The planner agent (your side) reads this**, confirms or modifies the plan, then sends back. Implementation follows your response.
->
-> **Date:** 2026-06-04 (updated with planner corrections)
-
----
-
-## 1. What This Project Is
-
-NestJS backend. MetaMask-native wallet skill marketplace. Users install "skills" (DCA, Aerodrome Vote, …) that execute on-chain under explicit, auditable, revocable **ERC-7715/7710** permissions. Backed by MongoDB (Mongoose). Runtime relays through 1Shot v2 (gas-abstracted, ERC-20 fee). No executor private keys stored or generated here.
-
-**Path:** `/home/raihanmd/Work/hackathon/skill-wallet`
-**Stack:** Bun, NestJS, Mongoose, viem, Zod (v4 — uses `.issues` not `.errors`), pino
-**4 gates that must pass after every change:** `bun run build`, `bun run lint` (`--max-warnings 0`), `bun run typecheck`, `bun test`
+> **Date:** 2026-06-04 (post-Goal-3)
+> **Audience:** planner agent (user side) + future me
 
 ---
 
-## 2. Previous Session Summary (so planner agent doesn't re-propose done work)
+## 0. Status (one-liner)
 
-### 2.1 Hardening passes that are DONE
-
-- **14-phase 1Shot relayer hardening** — real OpenRPC wire shapes, typed error codes (4001/4200/4202/4204/4210/4211), bundle validator, estimate-before-send, Ed25519 webhook verification, quote-locking, DCA fail-closed
-- **14-phase MetaMask Smart Accounts Kit proof page** — `public/proof.html` (9 sections), 1 backend controller (`src/runtime/proof/proof.controller.ts`), real MetaMask extension → backend → 1Shot v2 chain (no Pimlico, no bundler, no paymaster, no mocks)
-- **Executor bootstrap** — single private key → same address on all 12 chains, `EXECUTOR_PRIVATE_KEY=0x342de760c70e2714cdcd668955bd7025e4eed90464515241062480f3e1766860`, `EXECUTOR_ADDRESS=0x62ec02AC72f8c92A03065C9C19a95a7D94CE42e`. Generated from fresh (not from any prior wallet).
-- **DelegationManager contract address** — fetched from MetaMask Smart Accounts Kit v1.3.0 `contractAddresses.ts`. Sepolia = `0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3`
-- **ERC-7715-first install path** — backend prepares `PermissionRequest[]`; client calls `wallet_requestExecutionPermissions`; backend stores raw `PermissionResponse[]` exactly; runtime uses granted `context` + `delegationManager`; fail-closed on incomplete state
-- **Response envelope** — `{ payload, meta }` / `{ error, meta }`, `requestId` correlation, never leaks stack traces in production
-- **Admin auth** — `x-api-key` header, `timingSafeEqual`, gated on mutation routes
-- **`scripts/reset-db.ts`** — drops SkillWallet DB; requires `--yes` unless `MONGODB_DB_NAME` contains "test" (case-insensitive). Wired as `npm run db:reset`
-
-### 2.2 Test counts (after `85945ca`)
-
-- `bun test` — **114 pass / 0 fail / 239 expect() calls** across 12 test files
-- `bun run typecheck` — 0 errors
-- `bun run build` — 83 swc files, 0 errors
-- `bun run lint` — 0 errors / 0 warnings
-
-### 2.3 Most recent commits
+**All 3 planned goals DONE.** Gates green: `typecheck 0` / `lint 0-0` / `build 84 swc` / `test 133 pass / 0 fail`. Local commits only (no push per standing user rule).
 
 ```
-85945ca  fix(permissions): accept MetaMask object shape for walletReportedPermissions
-8bdd602  refactor(permissions): ERC-7715-first install path (21 files, +137/-35)  [pushed]
-b73bd7d  feat(executor): bootstrap main executor across 12 chains                [pushed]
+54d6523  feat(permissions): isAdjustmentAllowed=true for DCA + attenuation matrix
+5f8a60a  feat(permissions): generic DCA config + Sepolia token allowlist
+fb02e1f  fix(permissions): add `to: executor.executorAddress` to permissionRequests[0]
 ```
-
-User preference (standing): **don't push** going forward. Local commits only.
-
-### 2.4 End-to-end verified (real curl, real MetaMask-shape responses)
-
-Sepolia 11155111, EOA `0xda68774e8f4c26ce9c4e65033e76709c39d7fb79`, SA `0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1`:
-
-- `POST /permissions/check-support` with object shape `{ "erc20-token-periodic": { ruleTypes, chainIds } }` → `allSupported: true`, `matched[]` contains the requirement
-- `POST /permissions/prepare` (DCA, no schedule) → `installationId: inst_2064faa2-a3b3-47e3-bd0c-8f25025928f2`, `permissionRequests[]` shape `[{ chainId, from, permission, rules }]`
-- `POST /permissions/grant` (mock context `0xdeadbeef…`) → `activation: active`, `grant.status: granted`, `delegation[0].status: redeemable`, `installation.status: active`
 
 ---
 
-## 3. Constraints (NON-NEGOTIABLE — planner must respect)
+## 1. Previous Plan Summary (for planner context — was 406 lines, now condensed)
+
+The previous DOCS.md laid out a 3-goal plan based on real bugs:
+- **Goal 1.** `wallet_requestExecutionPermissions` Zod rejected `permissionRequests[]` without `to` (proof.html step 3 threw `Expected a string, but received: undefined`). Per ERC-7715: `from` = delegator (smart account), `to` = delegate (executor).
+- **Goal 2.** Hardcoded `dca-usdc-weth` skill was a UX blocker — user wants any ERC-20 pair, not just USDC→WETH. Per-chain allowlist (Sepolia v1 = USDC + WETH) with `allowCustomToken?` opt-in (default false). Self-swap always rejected.
+- **Goal 3.** `isAdjustmentAllowed` was hardcoded `false` for all skills. DCA needs it `true` (user must be able to change spend over time). Aerodrome stays `false` until real impl. Refactor `verifyAttenuation` per matrix: amount up / duration down / identity mismatch → REJECT.
+
+**Planner corrections applied:**
+- `to` field = executor address (not smart account)
+- Sepolia allowlist v1 = USDC + WETH, other chains empty (= no enforcement)
+- `allowCustomToken` defaults false
+- Self-swap always rejected
+- Per-adapter allowlist for `isAdjustmentAllowed` (DCA = true, others = false)
+- Post-grant change = revoke + request new (not wallet-initiated adjust)
+- `requiredRuleTypes: ['expiry']` only (not `['erc20-periodic-spend', 'expiry']`)
+
+---
+
+## 2. Implementation Details
+
+### 2.1 Goal 1 — `to` field in `permissionRequests[]` (commit `fb02e1f`)
+
+**Where:**
+- `src/permissions/permissions.service.ts:197` — `permissionRequests[]` projection now includes `to: executor.executorAddress` (line was empty before, projecting from `compiled.walletRequest.rawRequest.to`)
+- `test/permissions-service.spec.ts` — new test "projects `to: executorAddress` and `from: smartAccountAddress` in permissionRequests[0]"
+
+**Curl verified:** `permissionRequests[0].to === "0x62ec02AC72f8cA92A03065C9C19a95a7D94CE42e"` (executor address).
+
+**Files:** 1 modified + 1 test.
+
+---
+
+### 2.2 Goal 2 — Generic DCA + Sepolia allowlist (commit `5f8a60a`)
+
+**New file:** `src/chains/chain-token-registry.ts`
+- `getAllowedTokens(chainId): Address[]` — returns the per-chain allowlist
+- `isTokenAllowed(chainId, address): boolean`
+- Sepolia v1: `USDC 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (dec 6) + `WETH 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14` (dec 18) — WETH EIP-55 requires lowercase `1f` (viem rejects `1F`)
+- Other chains: empty allowlist = no enforcement
+
+**Generic DCA config (DTOs):**
+- `src/permissions/dto/prepare-permission-request.dto.ts` — `dcaConfigSchema`:
+  - `tokenIn` / `tokenOut`: `{ symbol: z.string().min(2).max(20), address: addressField, decimals: z.number().int().min(0).max(36) }`
+  - `allowCustomToken?: z.boolean()` (default false)
+- `src/installations/dto/create-installation.dto.ts` — same generic mirror
+- `src/skills/schemas/dca-skill-config.schema.ts` — already generic (no change needed)
+
+**Built-in rename:** `dca-usdc-weth` → `dca-generic` in `src/skills/definitions/built-in-skills.ts`. `requiredRuleTypes: ['expiry']` (per support-check correction).
+
+**Service enforcement:** `src/permissions/permissions.service.ts:106-130`:
+- `tokenIn.address === tokenOut.address` → throw `SELF_SWAP_REJECTED` (400)
+- `tokenIn/tokenOut not in allowlist` AND `!allowCustomToken` → throw `TOKEN_NOT_ALLOWED` (422)
+
+**New error codes** (`src/common/errors/error-codes.ts` + HTTP mappings in `src/common/errors/app-error.ts`):
+- `TOKEN_NOT_ALLOWED` → 422
+- `SELF_SWAP_REJECTED` → 400
+
+**Curl verified (5 cases):**
+- `dca-generic` + `USDC→WETH` → OK, `to: 0x62ec...CE42e` ✓
+- self-swap (`USDC→USDC`) → `SELF_SWAP_REJECTED` ✓
+- unknown token in, no `allowCustomToken` → `TOKEN_NOT_ALLOWED` ✓
+- unknown token in + `allowCustomToken: true` → OK ✓
+- check-support → `allSupported: true` ✓
+
+**Files:** 1 new + 7 modified + 1 test file (5 new tests).
+
+---
+
+### 2.3 Goal 3 — `isAdjustmentAllowed=true` for DCA only + attenuation matrix (commit `54d6523`)
+
+**Per-adapter allowlist (2 layers):**
+- **DTO layer:** `dcaConfigSchema` has `isAdjustmentAllowed?: z.boolean()`; `aerodromeVoteConfigSchema` does NOT (Zod rejects if user tries to set it on Aerodrome)
+- **Compiler layer:** `compileDca` uses `config.isAdjustmentAllowed ?? true`; `compileAerodromeVote` hardcodes `false` (always)
+
+**Manifest `permissions[]` now carries:**
+- `isAdjustmentAllowed: boolean`
+- `maxPeriodAmount: string` (base units, equals the requested amountPerRun)
+- `minPeriodDuration: number` (seconds, equals the requested periodSeconds)
+
+**Attenuation matrix (enforced in `src/permissions/permissions.service.ts:verifyAttenuation`):**
+
+| Requested | Granted | Action |
+|---|---|---|
+| `true` | `true` | OK (wallet honored) |
+| `true` | `false` | OK (wallet chose stricter) |
+| `false` | `true` | REJECT `ADAPTER_NOT_ALLOWED_ADJUSTMENT` |
+| any | amount > requested | REJECT `OVER_ATTENUATION` |
+| any | duration < requested (both > 0) | REJECT `OVER_ATTENUATION` (attacker-friendly tightening) |
+| any | amount < 0 | REJECT `OVER_ATTENUATION` |
+| any | duration < 0 | REJECT `OVER_ATTENUATION` |
+| any | `tokenAddress` mismatch | REJECT `ATTENUATION_MISMATCH` |
+| any | `delegationManager` mismatch (vs executor's `delegationManagerAddress`) | REJECT `ATTENUATION_MISMATCH` |
+| any | chainId / from / type mismatch | REJECT (outer check, unchanged) |
+| any | `context` or `delegationManager` empty | REJECT (outer check, unchanged) |
+
+**Outer checks (preserved in `submitGrant` before `verifyAttenuation`):**
+- `response.chainId === installation.chainId`
+- `response.from === installation.smartAccountAddressNormalized` (if provided)
+- `response.context` and `response.delegationManager` non-empty
+- `response.permission.type` matches requested
+
+**New error codes:**
+- `ADAPTER_NOT_ALLOWED_ADJUSTMENT` → 422
+- `OVER_ATTENUATION` → 422
+- `ATTENUATION_MISMATCH` → 422
+
+**Curl verified (2 cases):**
+- DCA prepare (default) → `permissionRequests[0].permission.isAdjustmentAllowed === true` ✓
+- DCA prepare with `isAdjustmentAllowed: false` → false ✓
+- Aerodrome prepare with `isAdjustmentAllowed: true` → Zod rejects (no field on aerodrome config)
+
+**Files:** 0 new + 6 modified + 1 test file (13 new tests).
+
+---
+
+## 3. Test Counts (gates)
+
+| Gate | Before (Goal 0) | After Goal 1 | After Goal 2 | After Goal 3 |
+|---|---|---|---|---|
+| `bun test` | 114/0/239 | 115/0/241 | 120/0/248 | **133/0/~270** |
+| `bun run typecheck` | 0 | 0 | 0 | 0 |
+| `bun run build` | 83 swc | 84 swc | 84 swc | **84 swc** |
+| `bun run lint` | 0/0 | 0/0 | 0/0 | **0/0** |
+
+**13 new Goal 3 tests in `test/permissions-service.spec.ts`:**
+- 4 accepts: same amount/duration; amount lowered; duration longer; wallet-chose-stricter
+- 9 rejects: amount increased; duration shorter; tokenAddress mismatch; delegationManager mismatch; `requested=false + granted=true`; amount increased (when `requested=false`); duration shorter (when `requested=false`); negative amount; empty delegationManager
+
+---
+
+## 4. Files Changed (current state)
+
+| File | Goal | Change |
+|---|---|---|
+| `docs/DOCS.md` | all | This file (replaced) |
+| `src/chains/chain-token-registry.ts` | 2 | NEW — per-chain allowlist |
+| `src/permissions/permission-compiler.service.ts` | 2+3 | `isAdjustmentAllowed` per-adapter allowlist; `maxPeriodAmount` + `minPeriodDuration` in manifest |
+| `src/permissions/permissions.service.ts` | 1+2+3 | `to: executorAddress` projection; self-swap + allowlist enforcement; refactored `verifyAttenuation` |
+| `src/permissions/dto/prepare-permission-request.dto.ts` | 2+3 | Generic `dcaConfigSchema`; `isAdjustmentAllowed?` field |
+| `src/installations/dto/create-installation.dto.ts` | 2+3 | Generic `dcaConfigSchema` mirror; `isAdjustmentAllowed?` field |
+| `src/skills/definitions/built-in-skills.ts` | 2 | Rename `dca-usdc-weth` → `dca-generic` |
+| `src/common/errors/error-codes.ts` | 2+3 | `TOKEN_NOT_ALLOWED`, `SELF_SWAP_REJECTED`, `ADAPTER_NOT_ALLOWED_ADJUSTMENT`, `OVER_ATTENUATION`, `ATTENUATION_MISMATCH` |
+| `src/common/errors/app-error.ts` | 2+3 | HTTP status mappings for new codes |
+| `test/permissions-service.spec.ts` | 1+2+3 | 19 new tests (1 + 5 + 13) |
+
+**Not changed** (still generic / already correct):
+- `src/skills/schemas/dca-skill-config.schema.ts` — already generic
+- `src/skills/schemas/aerodrome-vote-skill-config.schema.ts` — no change needed
+- DCA adapter (`src/runtime/adapters/dca.adapter.ts`) — still fail-closed `NOT_IMPLEMENTED`
+
+---
+
+## 5. Critical State (file map for planner)
+
+| Concern | File |
+|---|---|
+| Compile manifest + ERC-7715 request | `src/permissions/permission-compiler.service.ts` |
+| Attenuation verification (refactored) | `src/permissions/permissions.service.ts:434-510` |
+| Project `permissionRequests[]` with `to` | `src/permissions/permissions.service.ts:167-200` |
+| Self-swap + allowlist enforcement | `src/permissions/permissions.service.ts:106-130` |
+| DTOs | `src/permissions/dto/prepare-permission-request.dto.ts` |
+| DTOs (create-installation) | `src/installations/dto/create-installation.dto.ts` |
+| Skill definitions | `src/skills/definitions/built-in-skills.ts` |
+| Token allowlist | `src/chains/chain-token-registry.ts` (new) |
+| Error codes registry | `src/common/errors/error-codes.ts` |
+| Test (compile + service + support) | `test/permission-*.spec.ts`, `test/permissions-service.spec.ts` |
+| Reset script | `scripts/reset-db.ts` |
+| Reset npm script | `package.json` (`db:reset`) |
+| proof.html step 3 (the error site — now fixed) | `public/proof.html` line 414+ |
+
+---
+
+## 6. Constraints (NON-NEGOTIABLE — preserved from prior plan)
 
 - **No mock endpoints, no mock adapters, no fake execution success, no dummy calldata**
 - **AI does not generate calldata** — `ProposedAction` is built server-side by adapter
 - **PolicyValidator fails closed**
-- **Runtime fails closed** — every link in the chain must be valid; missing/wrong → `failed`/`blocked`
+- **Runtime fails closed** — every link in the chain must be valid
 - **Do not manually create delegation in the primary ERC-7715 install path** — backend stores what the wallet returns
 - **Do not rely on DelegationManager logs** to know a skill is installed — DB is source of truth after `grant`
 - **No private keys in this repo, ever** — never store, never request, never generate
-- **Wipe is safe** — DB reset between dev cycles is approved; no migration code needed
-- **DB** is MongoDB via Mongoose (NOT MariaDB/SQL/TypeORM/Prisma) — keep this; user reaffirmed wipe-safe
+- **Wipe is safe** — DB reset between dev cycles is approved
+- **DB is MongoDB via Mongoose** (NOT MariaDB/SQL/TypeORM/Prisma)
 - **Zod v4** — uses `.issues` not `.errors`
 
----
-
-## 4. Standing User Preferences
-
+**Standing user preferences:**
 - Terse caveman style in chat (code/paths/errors exact, drop filler)
-- Sub-agents use **same model+provider as parent** (`9router/main`, `9router`) — **Metis kept aborting in this session, switched to `general` agent which completed in 3m 24s**
-- "Wipe is safe" — DB reset OK
+- Sub-agents use **same model+provider as parent** (`9router/main`, `9router`) — **NEVER Gemini Pro** (user has no Gemini subscription; "kamu masih saja spawn sub agent pakai gemini pro, sudah tau saya tidak ada langganan itu gabisa lah kocak!!!")
 - "Don't push from now on" — local commits only
-- proof.html is a temporary test client; backend core is the primary deliverable
-- IAM permission `cloudaicompanion.instances.completeTask` is **BLOCKED** for task delegation in this env — work around by implementing directly
-- For DCA: **`isAdjustmentAllowed` MUST be `true`** (user must be able to change spend per period)
-- DCA skill MUST be **generic** — user picks coin pair, not hardcoded USDC→WETH
 
 ---
 
-## 5. The Plan: 3 Goals, Ordered by Dependency
-
-### Goal 1 (smallest, unblocks proof.html step 3): add `to` field to `permissionRequests[]`
-
-**Why.** MetaMask's `wallet_requestExecutionPermissions` Zod schema **requires** a `to` field in each permission request (`ExecutionPermissionRequest`). Current response from `POST /permissions/prepare` returns `permissionRequests[]` shaped `[{ chainId, from, permission, rules }]` — no `to`. proof.html step 3 throws:
-
-```
-Invalid params: 0 > to - Expected a string, but received: undefined
-```
-
-**Field semantics (ERC-7715).**
-- `from` = account **granting** permission (SkillWallet = Smart Account / delegator)
-- `to` = dapp **session account** / **delegate** / **executor** (SkillWallet = the executor address the permission delegates to)
-- Therefore `permissionRequests[]` must project:
-  - `from: smartAccountAddress`
-  - `to: executorAddress`
-- **Do NOT set `to` to `smartAccountAddress`** — planner correction.
-
-**Where the value comes from.** The compiler already computes `to: input.executorAddress` correctly on the `rawRequest` (`src/permissions/permission-compiler.service.ts:188-213`). The bug is that the **response projection** drops it (and the DTO may not declare it).
-
-**Fix scope.**
-1. `src/permissions/permissions.service.ts:167-175` — add `to: <executorAddress>` to the `permissionRequests[]` projection. Resolve `executorAddress` from the active chain's main executor (same source the runtime uses to build bundles).
-2. `src/permissions/dto/prepare-permission-request.dto.ts` — ensure response DTO `permissionRequests` element schema includes `to: addressField` (must be present, must be valid address). Reject requests without it at the DTO level too.
-3. **Test:**
-   - `POST /permissions/prepare` response includes `permissionRequests[0].to` set to the executor address
-   - `from` set to the smart account address
-   - Missing `to` in compiler output → service throws typed error
-4. **Verify:** proof.html step 3 no longer throws Zod error; full curl flow returns 200.
-
-**Risk:** low. Two files (service + DTO), no security, no schema change. **Wipe:** not needed (no schema change).
-
----
-
-### Goal 2: generic DCA skill config + Sepolia token allowlist
-
-**Why.** Current DCA (`dca-usdc-weth`) is hardcoded:
-- `dcaConfigSchema` uses `z.literal('USDC')` / `z.literal('WETH')` for tokens
-- decimals `z.literal(6)` / `z.literal(18)` hardcoded
-- only the USDC→WETH pair is installable
-- user wants any ERC-20 pair — but **NOT arbitrary addresses in v1** (planner correction)
-
-**What "generic" means.** User picks `tokenIn` + `tokenOut` (symbol + address + decimals) at install time. Skill type stays `DCA`. Adapter logic doesn't change — it's still fail-closed (`DcaAdapter.buildAction` throws `NOT_IMPLEMENTED` — see CLAUDE.md). The change is the **config surface**, not the **execution surface**.
-
-**Sepolia token allowlist (v1, planner correction).**
-
-```
-USDC: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238, decimals 6
-WETH: 0xfFf9976782d46CC05630D1F6eBAb18b2324d6B14, decimals 18
-```
-
-- Reject `tokenIn == tokenOut` (no self-swap)
-- Reject token addresses **not in allowlist** unless `allowCustomToken=true` (which **must default false**)
-- `allowCustomToken=true` is a config-time opt-in (per-installation) — defaults to false so the allowlist is enforced by default
-- Allowlist lives at `src/chains/chain-token-registry.ts` (new file), keyed by `chainId`
-- Compiler (or service) consults the registry during `prepare` and throws typed `TOKEN_NOT_ALLOWED` error when violated
-- Custom token support is the v1 escape hatch for chains that don't have an allowlist yet (or for power users)
-
-**Fix scope.**
-
-1. `src/permissions/dto/prepare-permission-request.dto.ts` — `dcaConfigSchema`:
-   - Replace `z.literal('USDC')` / `z.literal('WETH')` with `z.string().min(2).max(20)` for symbol
-   - Add `address: addressField` (use existing `addressField` helper)
-   - Replace `z.literal(6)` / `z.literal(18)` with `z.number().int().min(0).max(36)` for decimals
-   - Schema shape becomes `{ tokenIn: { symbol, address, decimals }, tokenOut: { symbol, address, decimals }, periodAmount, periodDuration, startTime, expiry, allowCustomToken? }`
-2. `src/chains/chain-token-registry.ts` (new) — per-chain allowlist with `getAllowedTokens(chainId): Address[]`, `isTokenAllowed(chainId, address): boolean`
-3. `src/skills/definitions/built-in-skills.ts` — replace `dca-usdc-weth` with `dca-generic` (or just `dca`); remove hardcoded pair from skill definition; keep `permissionRequirements[]` (still `erc20-token-periodic` + `expiry` per planner correction — see § support-check correction below)
-4. `src/skills/schemas/dca-skill-config.schema.ts` — Mongoose-side schema mirror the generic Zod shape (no more `'USDC' | 'WETH'` literal)
-5. `src/permissions/permissions.service.ts` (or compiler) — in `prepareRequest`, after Zod validation: check `tokenIn.address` + `tokenOut.address` against allowlist; if not allowed and `allowCustomToken !== true` → throw typed `TOKEN_NOT_ALLOWED`; also reject `tokenIn.address === tokenOut.address`
-6. **Test:**
-   - new install w/ `tokenIn=USDC, tokenOut=WETH` validates and compiles
-   - install w/ `tokenIn=USDC, tokenOut=USDC` rejected (self-swap)
-   - install w/ unknown address rejected (not in allowlist, no `allowCustomToken`)
-   - install w/ unknown address + `allowCustomToken=true` accepted
-   - install w/ `tokenIn=USDC, tokenOut=WETH` + `allowCustomToken=true` still accepted
-7. **Verify:** `POST /permissions/prepare` w/ generic config produces a valid `permissionRequest`; check-support still works; full curl flow succeeds
-
-**Risk:** medium. New file (`chain-token-registry.ts`), schema change in 3 files. Bumps a `SkillDefinition` builtin (wipe is safe — no migration needed).
-
----
-
-### Goal 3 (most security-sensitive, do LAST): `isAdjustmentAllowed: true` for DCA only
-
-**Why.** ERC-7715 `isAdjustmentAllowed` flag controls whether the **wallet** is allowed to attenuate (lower) the permission at grant time. Current attenuation handler in `src/permissions/permissions.service.ts:434-471` (`verifyAttenuation`) **rejects** `isAdjustmentAllowed=true` for all skills.
-
-**Semantics (planner correction).** `isAdjustmentAllowed=true` means wallet may adjust/attenuate permission during approval. It does **NOT** automatically mean user can change spend amount after grant. Post-grant change is **revoke + request new permission**.
-
-**Scope (planner correction).** For MVP, **only DCA** may request `isAdjustmentAllowed=true`. **Aerodrome stays `false`** until real permission type/adapter is implemented.
-
-**Spec detail (re-read 7715 if needed).** `isAdjustmentAllowed` is on the `permission` object — NOT the response top-level. Server reads `response.permission.isAdjustmentAllowed`.
-
-**The contract we want (planner correction):**
-
-| Scenario | Server behavior |
-| --- | --- |
-| `requested=true` + `granted=true` + `periodAmount` lowered | OK — wallet downgraded |
-| `requested=true` + `granted=true` + `periodAmount` increased | REJECT — over-attenuation |
-| `requested=true` + `granted=true` + `periodDuration` shortened | REJECT — more frequent, attacker-friendly |
-| `requested=true` + `granted=true` + `periodDuration` lengthened | OK — less frequent, user-friendly |
-| `requested=true` + `granted=true` + `type` / `chain` / `from` / `to` / `context` / `delegationManager` mismatch | REJECT |
-| `requested=false` + any change to permission | REJECT |
-| `requested=false` + unchanged | OK |
-| `requested=true` from non-DCA adapter | REJECT (per-adapter allowlist) |
-
-**Fix scope.**
-
-1. `src/permissions/permission-compiler.service.ts` — currently `isAdjustmentAllowed: false` hardcoded at lines 194, 223, 312, 336. Change to read from a **per-adapter allowlist**: only `dca` may set `true`; everything else forced to `false`. Reject `requested=true` from non-DCA adapters (typed `ADAPTER_NOT_ALLOWED_ADJUSTMENT` error).
-2. `src/permissions/permissions.service.ts:verifyAttenuation` (lines 434-471) — refactor per the matrix above:
-   - Read both `requested.isAdjustmentAllowed` (from manifest) and `granted.permission.isAdjustmentAllowed` (from response)
-   - If `requested=false` AND `granted !== requested` → reject
-   - If `requested=true` AND `granted.permission` is structurally same type + chainId match → inspect `data`
-   - If `requested=true`: enforce server-side hard cap — `granted.permission.data.periodAmount ≤ manifest.maxPeriodAmount` AND `granted.permission.data.periodDuration ≥ manifest.minPeriodDuration` (longer period = less frequent, user-friendly)
-   - `type` / `chain` / `from` / `to` / `context` / `delegationManager` mismatch → reject (unchanged)
-3. Update `PermissionManifest.permissions[].maxPeriodAmount` + `minPeriodDuration` fields if not present — add Zod fields. Source the cap from manifest primary; `SkillDefinition.constraints.maxPeriodAmount` as backstop (defense in depth).
-4. **Test** (per matrix):
-   - `requested=true, granted=true, periodAmount unchanged` → OK
-   - `requested=true, granted=true, periodAmount LOWERED` → OK
-   - `requested=true, granted=true, periodAmount INCREASED` → REJECT (over-attenuation)
-   - `requested=true, granted=true, periodDuration SHORTENED` → REJECT
-   - `requested=true, granted=true, periodDuration LENGTHENED` → OK
-   - `requested=true, granted=true, type MISMATCH` → REJECT
-   - `requested=true, granted=true, chainId MISMATCH` → REJECT
-   - `requested=true, granted=true, from MISMATCH` → REJECT
-   - `requested=true, granted=true, to MISMATCH` → REJECT
-   - `requested=true, granted=true, context MISSING` → REJECT
-   - `requested=true, granted=true, delegationManager MISSING` → REJECT
-   - `requested=false, granted=true` → REJECT
-   - `requested=false, granted=false, unchanged` → OK
-   - `requested=true, granted=false` → REJECT (wallet downgraded the flag itself)
-   - `requested=true` from non-DCA adapter → REJECT
-5. **Verify:** full curl flow with `isAdjustmentAllowed=true` + lowered `periodAmount` from wallet → grant succeeds + installation activates
-
-**Risk:** HIGH. This is the security-sensitive change. Order matters — do this LAST after Goals 1+2 are stable. Test the rejected cases before the accepted cases.
-
----
-
-## 6. Support-Check Correction (applies to Goals 1+2+3)
-
-**Planner correction.** ERC-7715 wallet rule types should include `expiry`. Do **not** treat internal `erc20-periodic-spend` as a wallet rule type. SkillWallet internal manifest may use `rule.kind = 'erc20-periodic-spend'`, but the **wallet support check for DCA requires**:
-
-```
-permissionType:    'erc20-token-periodic'
-requiredRuleTypes: ['expiry']
-```
-
-**What this means for code.**
-
-- `SkillDefinition.permissionRequirements[]` for DCA must set `requiredRuleTypes: ['expiry']` (not `['erc20-periodic-spend', 'expiry']`).
-- The support-checker compares wallet-reported rule types against the skill's `requiredRuleTypes[]`. The wallet reports what it supports — for `erc20-token-periodic`, that includes `expiry`. Our internal `erc20-periodic-spend` is a server-side rule, not a wallet rule.
-- If the current built-in DCA has `requiredRuleTypes: ['erc20-periodic-spend', 'expiry']`, the wallet will report `['expiry']` and we'll report the skill as "not fully supported" — even when it is.
-- **Fix in Goal 2** (when we replace `dca-usdc-weth` with `dca-generic`): set `requiredRuleTypes: ['expiry']`.
-- **Tests:**
-  - check-support w/ skill `requiredRuleTypes: ['expiry']` + wallet reports `['expiry']` → `matched[]` contains it
-  - check-support w/ skill `requiredRuleTypes: ['erc20-periodic-spend', 'expiry']` + wallet reports `['expiry']` only → `matched[]` does NOT contain it (or `missing[]` flags `erc20-periodic-spend`) — this is the bug we're fixing
-
----
-
-## 7. Order of Operations (HARD)
-
-```
-1. Goal 1 (to field)              — small, isolated, fixes a real Zod error
-2. Goal 2 (generic DCA + allowlist) — schema change, multiple files
-3. Goal 3 (isAdjustmentAllowed)   — security-sensitive, broad blast radius
-
-Each step:
-  a) Implement
-  b) Add/update tests
-  c) Run 4 gates — all must pass
-  d) Verify with curl (real EOA + SA + Sepolia) — full flow
-  e) Local commit (no push) — conventional commit message
-  f) Move to next
-```
-
-Between steps, `bun run db:reset` is OK to wipe the DB so the new built-in DCA replaces the old hardcoded one.
-
----
-
-## 8. Files Touched (planned)
-
-| Goal | File | Change |
-| ---- | ---- | ------ |
-| 1 | `src/permissions/permissions.service.ts` | Add `to: <executorAddress>` to `permissionRequests[]` projection (~167-175). Keep `from: smartAccountAddress` |
-| 1 | `src/permissions/dto/prepare-permission-request.dto.ts` | Ensure `permissionRequests[]` element schema includes `to: addressField` (mandatory) |
-| 1 | `test/permissions-service.spec.ts` | Assert `to` field present, equal to executor address; `from` equal to smart account address |
-| 2 | `src/chains/chain-token-registry.ts` (new) | Per-chain allowlist (`getAllowedTokens`, `isTokenAllowed`); Sepolia: USDC + WETH |
-| 2 | `src/permissions/dto/prepare-permission-request.dto.ts` | `dcaConfigSchema` → generic (symbol/address/decimals); add `allowCustomToken?` field |
-| 2 | `src/permissions/permissions.service.ts` (or compiler) | Reject `tokenIn.address === tokenOut.address`; reject not-in-allowlist unless `allowCustomToken === true` |
-| 2 | `src/skills/definitions/built-in-skills.ts` | Replace `dca-usdc-weth` with `dca-generic`; `requiredRuleTypes: ['expiry']` (per support-check correction §6) |
-| 2 | `src/skills/schemas/dca-skill-config.schema.ts` | Mirror generic Zod shape (no literals) |
-| 2 | `test/permissions-service.spec.ts` | self-swap rejected, unknown address rejected, unknown + `allowCustomToken=true` accepted |
-| 2 | `test/dca-skill-config.spec.ts` (new) | Schema-level tests for generic config |
-| 2 | `test/support-checker.spec.ts` | wallet reports `['expiry']` matches DCA `requiredRuleTypes: ['expiry']` |
-| 3 | `src/permissions/permission-compiler.service.ts` | `isAdjustmentAllowed` reads from per-adapter allowlist (was hardcoded `false` at 194, 223, 312, 336); only `dca` may be `true` |
-| 3 | `src/permissions/permissions.service.ts` | `verifyAttenuation` (434-471) refactor per § Goal 3 matrix — distinguishes requested vs granted, enforces server-side hard cap |
-| 3 | `src/permissions/dto/prepare-permission-request.dto.ts` | `PermissionManifest.permissions[].maxPeriodAmount` + `minPeriodDuration` |
-| 3 | `src/skills/definitions/built-in-skills.ts` | Mark `dca-generic.permissions[0].isAdjustmentAllowed: true` in template |
-| 3 | `test/permissions-service.spec.ts` | 14+ new attenuation cases (per matrix) |
-| 3 | `test/permission-compiler.spec.ts` | Per-adapter allowlist test (DCA = true, others = false) |
-| 3 | `src/common/errors/error-codes.ts` | `ADAPTER_NOT_ALLOWED_ADJUSTMENT`, `OVER_ATTENUATION`, `TOKEN_NOT_ALLOWED`, `SELF_SWAP_REJECTED` (add if not present) |
-
----
-
-## 8. Test Strategy (total target after all 3 goals)
-
-- `bun test` — currently **114 pass / 0 fail / 239 expect() calls**
-- Add ~20-25 new tests across `permissions-service.spec.ts` (attenuation matrix), `permission-compiler.spec.ts` (per-adapter allowlist), `dca-skill-config.spec.ts` (new file, generic schema), `dca-skill-config.spec.ts` validation
-- Target after all 3 goals: **~135-140 pass / 0 fail**
-
----
-
-## 9. Open Questions for Planner
-
-1. **Generic DCA + token allowlist v1:** ship with per-chain allowlist (e.g. only allow USDC + WETH on Sepolia) or accept any address (open risk: bad addresses = user grief)? **Recommendation: ship with empty allowlist v1, document the open risk, add allowlist in next pass.**
-2. **`aerodrome-vote` isAdjustmentAllowed=true?** Re-casting vote every epoch might want this. **Recommendation: yes, add to allowlist. Same pattern.**
-3. **Server-side hard cap:** where to source the cap? Options:
-   - From `PermissionManifest.permissions[].maxPeriodAmount` (preferred — explicit, auditable)
-   - From `SkillDefinition.constraints.maxPeriodAmount` (backstop in case manifest is missing)
-   - Both (defense in depth)
-   - **Recommendation: both. Manifest wins; skill definition is the backstop.**
-4. **DB wipe between goals:** wipe at start of each goal, or only at start of Goal 2? **Recommendation: wipe before Goal 2 (schema change). Wipe before Goal 3 only if built-in changes. Goal 1 = no schema change, no wipe needed.**
-5. **Should we add `to` field to the Zod DTO of the prepare response too?** Currently the response DTO is `permissionRequests: z.array(rawRequestSchema)`. If `rawRequest` has `to`, the schema needs it too. **Recommendation: yes, single source of truth — if compiler computes `to`, DTO must accept it.**
-
----
-
-## 10. Critical State (file map for planner)
-
-| Concern | File |
-| --- | --- |
-| Compile manifest + ERC-7715 request | `src/permissions/permission-compiler.service.ts` |
-| Verify attenuation (current) | `src/permissions/permissions.service.ts:434-471` |
-| Project `permissionRequests[]` | `src/permissions/permissions.service.ts:167-175` |
-| DTO schemas | `src/permissions/dto/prepare-permission-request.dto.ts` |
-| DTO schemas (grant) | `src/permissions/dto/grant-permission.dto.ts` |
-| Skill definitions | `src/skills/definitions/built-in-skills.ts` |
-| Skill Mongoose schema | `src/skills/schemas/skill-definition.schema.ts` |
-| DCA adapter (fail-closed) | `src/runtime/adapters/dca.adapter.ts` |
-| Installation DTO | `src/installations/dto/create-installation.dto.ts` |
-| Installation service | `src/installations/installations.service.ts` |
-| Reset script | `scripts/reset-db.ts` |
-| Reset npm script | `package.json` (line: `"db:reset": "bun scripts/reset-db.ts"`) |
-| Test (compile + service + support) | `test/permission-*.spec.ts`, `test/permissions-service.spec.ts` |
-| proof.html step 3 (the error site) | `public/proof.html` line 414+ (`runSign(skill)`) |
-| Error codes registry | `src/common/errors/error-codes.ts` |
-
----
-
-## 11. Sepolia Testnet Addresses (MetaMask v1.3.0)
+## 7. Sepolia Testnet Addresses (MetaMask Smart Accounts Kit v1.3.0)
 
 ```
 DelegationManager : 0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
 EntryPoint        : 0x0000000071727De22E5E9d8BAf0edAc6f37da032
-USDC (Sepolia)    : 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238
-WETH (Sepolia)    : 0xfFf9976782d46CC05630D1F6eBAb18b2324d6B14
+USDC (Sepolia)    : 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238  (dec 6)
+WETH (Sepolia)    : 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14  (dec 18) — EIP-55 requires lowercase '1f'
 ```
 
-12 supported chains: `[1, 10, 56, 130, 137, 143, 146, 8453, 11155111, 42161, 42220, 59144]`
+**12 supported chains:** `[1, 10, 56, 130, 137, 143, 146, 8453, 11155111, 42161, 42220, 59144]`
 
-Test EOA: `0xda68774e8f4c26ce9c4e65033e76709c39d7fb79`
-Test SA:  `0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1`
+| Account | Address |
+|---|---|
+| Test EOA | `0xda68774e8f4c26ce9c4e65033e76709c39d7fb79` |
+| Test SA (smart account) | `0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1` |
+| Executor | `0x62ec02AC72f8cA92A03065C9C19a95a7D94CE42e` |
+| Executor private key (test only) | `0x342de760c70e2714cdcd668955bd7025e4eed90464515241062480f3e1766860` |
 
 ---
 
-## 12. Verification Plan (after all 3 goals implemented)
+## 8. Curl Verification Recipes
 
+**Wipe + start:**
 ```bash
-# 1. Wipe DB (Goals 2 + 3 need fresh skill definitions)
 bun run db:reset --yes
+pkill -f "nest start\|swc-node"; sleep 2
+nohup bun run start:dev > /tmp/dev.log 2>&1 &
+sleep 12
+```
 
-# 2. Start dev server
-bun run start:dev
+**4 gates:**
+```bash
+bun run typecheck   # → 0
+bun run build       # → 84 swc
+bun run lint        # → 0/0
+bun test            # → 133/0
+```
 
-# 3. Four gates
-bun run typecheck   # → 0 errors
-bun run build       # → 0 errors
-bun run lint        # → 0 errors, 0 warnings
-bun test            # → ~135-140 pass, 0 fail
-
-# 4. End-to-end curl
+**Check support (DCA):**
+```bash
 curl -X POST http://localhost:4000/permissions/check-support \
   -H "Content-Type: application/json" \
-  -d '{"chainId":11155111,"userAddress":"0xda68774e8f4c26ce9c4e65033e76709c39d7fb79","smartAccountAddress":"0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1","permissionRequirements":[{"chainId":11155111,"permissionType":"erc20-token-periodic","requiredRuleTypes":["erc20-periodic-spend","expiry"]}],"walletReportedPermissions":{"erc20-token-periodic":{"ruleTypes":["erc20-periodic-spend","expiry"],"chainIds":["0xaa36a7"]}}}'
+  -d '{
+    "userAddress":"0xda68774e8f4c26ce9c4e65033e76709c39d7fb79",
+    "smartAccountAddress":"0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1",
+    "chainId":11155111,
+    "skillId":"dca-generic",
+    "walletReportedPermissions":{"erc20-token-periodic":{"ruleTypes":["expiry"],"chainIds":["0xaa36a7"]}}
+  }'
 # expect: allSupported: true
+```
 
+**Prepare (DCA generic, default = isAdjustmentAllowed=true):**
+```bash
 curl -X POST http://localhost:4000/permissions/prepare \
   -H "Content-Type: application/json" \
-  -d '{"installationId":"<new>","userAddress":"0xda68774e8f4c26ce9c4e65033e76709c39d7fb79","smartAccountAddress":"0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1","chainId":11155111,"skillId":"dca-generic","config":{"tokenIn":{"symbol":"USDC","address":"0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238","decimals":6},"tokenOut":{"symbol":"WETH","address":"0xfFf9976782d46CC05630D1F6eBAb18b2324d6B14","decimals":18},"periodAmount":"10000000","periodDuration":604800,"startTime":1700000000}}'
-# expect: permissionRequests[0].to === "0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1"
+  -d '{
+    "userAddress":"0xda68774e8f4c26ce9c4e65033e76709c39d7fb79",
+    "smartAccountAddress":"0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1",
+    "chainId":11155111,
+    "skillId":"dca-generic",
+    "config":{
+      "type":"dca",
+      "tokenIn":{"symbol":"USDC","address":"0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238","decimals":6},
+      "tokenOut":{"symbol":"WETH","address":"0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14","decimals":18},
+      "amountPerRun":"10","frequency":"weekly","maxSlippageBps":50,
+      "router":{"name":"uniswap","address":"0x0000000000000000000000000000000000000001"},
+      "recipient":"0xc50Dad92b92b0b76c973a2AffF47011Dc4f11DE1",
+      "quoteMode":"router-quote"
+    },
+    "pricingPlan":{"id":"p1","label":"Test","durationDays":7,"skillFeeUsdc":"1"}
+  }'
+# expect: permissionRequests[0].to === "0x62ec02AC72f8cA92A03065C9C19a95a7D94CE42e"
 # expect: permissionRequests[0].permission.isAdjustmentAllowed === true
+```
 
-# 5. proof.html
-open http://localhost:4000/proof
-# Click through 9 sections. Step 3 should now NOT throw "Expected a string, but received: undefined" for `to`.
+**Self-swap reject:**
+```bash
+# tokenIn === tokenOut (both USDC) → SELF_SWAP_REJECTED (400)
+```
+
+**Unknown token without opt-in:**
+```bash
+# tokenIn 0x4200...0042 (not in allowlist), allowCustomToken absent → TOKEN_NOT_ALLOWED (422)
+```
+
+**Unknown token with opt-in:**
+```bash
+# same + "allowCustomToken": true → OK
 ```
 
 ---
 
-## 13. Out of Scope (planner should NOT propose these)
+## 9. Pre-existing Issues (NOT in Goal 1/2/3 scope; flagged for follow-up)
+
+1. **`walletSupportCheck.checkId_1` unique index on `skill_installations`** — rejects nulls across multiple installs without check-support. 2nd `POST /permissions/prepare` (no check-support first) hits `CONFLICT`. Fix: sparse index or always-set checkId.
+2. **`checkId` deterministic from inputs** (in `src/permissions/permission-support-checker.service.ts:98`) — same inputs → same `checkId: check_<sha256trunc>`. Re-running check-support with identical inputs hits `E11000`. Fix: include `checkedAt` in hash or use uuid.
+3. **DCA adapter still fail-closed** — `src/runtime/adapters/dca.adapter.ts:buildAction` throws `NOT_IMPLEMENTED`. Not a bug, but no real DCA execution yet.
+4. **Aerodrome Vote still `adapter-ready`** — no real permission type / adapter implementation. `compileAerodromeVote` returns a placeholder.
+5. **Executor delegationManager lookup** — `verifyAttenuation` reads `executor.delegationManagerAddress`; if executor config is missing the field, the check is skipped silently. Acceptable for now (non-strict mode), but should be strict in production.
+
+---
+
+## 10. Out of Scope (planner should NOT propose these)
 
 - Executor key custody / KMS / signer service
 - Rate limiting
@@ -393,14 +326,12 @@ open http://localhost:4000/proof
 
 ---
 
-## 14. Status
+## 11. Open Follow-ups (planner may propose, not in current scope)
 
-- [x] Previous session work preserved (1Shot hardening, MetaMask proof page, executor bootstrap, ERC-7715-first)
-- [x] Bug fix `85945ca` committed locally (check-support accepts MetaMask object shape)
-- [x] Plan produced (this file)
-- [ ] Planner agent feedback awaited
-- [ ] Goal 1 (to field) — pending
-- [ ] Goal 2 (generic DCA) — pending
-- [ ] Goal 3 (isAdjustmentAllowed=true for DCA) — pending
-- [ ] All 4 gates green after each goal
-- [ ] Full curl + proof.html flow verified after each goal
+1. **Pre-existing bug fix** — sparse `walletSupportCheck.checkId` index + unique `checkId` (use uuid instead of deterministic hash)
+2. **Aerodrome `isAdjustmentAllowed`** — when real permission type lands, add to per-adapter allowlist (same pattern as DCA)
+3. **Per-chain allowlist expansion** — add tokens for chains 1, 10, 8453, 42161, 137 (mainnet, Optimism, Base, Arbitrum, Polygon)
+4. **Manifest `permissions[]` persistence** — currently Mongoose strips unknown `permissions` field (only stores `rules[]`). Add `permissions: SchemaTypes.Mixed` to `permission_manifests` schema for audit
+5. **proof.html re-verify** — step 3 (the `to` field error) should no longer throw; full 9-section flow should pass
+6. **Mongoose `installationModel` mock improvements** — `setPermissionGrantAndActivate` + `setPermissionGrantDependencies` are now mocked in `test/permissions-service.spec.ts`; may need same for other test files
+7. **DOCS.md README sync** — `README.md` still describes the old `dca-usdc-weth` flow in places; needs sync with the new generic + `isAdjustmentAllowed` flow
