@@ -75,7 +75,7 @@
     <section>
       <h2>8 · Revoke an installation</h2>
       <div class="label">POST /permissions/revoke (after wallet_revokeExecutionPermission)</div>
-      <input id="revoke-installation-id" placeholder="installationId" style="width: 360px;" />
+      <input id="revoke-installation-id" placeholder="installationId" style="width: 360px" />
       <button id="revoke-btn" class="primary">Revoke</button>
       <pre id="revoke-info">not revoked</pre>
     </section>
@@ -83,7 +83,7 @@
     <section>
       <h2>9 · Poll granted permission</h2>
       <div class="label">GET /permissions/granted/:installationId</div>
-      <input id="granted-installation-id" placeholder="installationId" style="width: 360px;" />
+      <input id="granted-installation-id" placeholder="installationId" style="width: 360px" />
       <button id="granted-btn" class="primary">Get Granted</button>
       <pre id="granted-info">not fetched</pre>
     </section>
@@ -173,7 +173,10 @@
             amountPerRun: '10',
             frequency: 'weekly',
             maxSlippageBps: 50,
-            router: { name: 'uniswap', address: state.smartAccount?.address ?? '0x0000000000000000000000000000000000000000' },
+            router: {
+              name: 'uniswap',
+              address: state.smartAccount?.address ?? '0x0000000000000000000000000000000000000000',
+            },
             recipient: state.smartAccount?.address ?? '0x0000000000000000000000000000000000000000',
             quoteMode: 'router-quote',
           };
@@ -248,7 +251,9 @@
               id: CHAIN_ID,
               name: 'Sepolia',
               nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-              rpcUrls: { default: { http: ['https://eth-sepolia.g.alchemy.com/v2/6-ELpC9NU0QhsOHwyFid4'] } },
+              rpcUrls: {
+                default: { http: ['https://eth-sepolia.g.alchemy.com/v2/6-ELpC9NU0QhsOHwyFid4'] },
+              },
             }),
             transport: viem.custom(window.ethereum),
           });
@@ -268,7 +273,8 @@
         try {
           if (!state.walletClient) throw new Error('connect MetaMask first');
           const { viem } = await loadKit();
-          const smartAccountModule = await import('https://esm.sh/@metamask/smart-accounts-kit@1.6.0');
+          const smartAccountModule =
+            await import('https://esm.sh/@metamask/smart-accounts-kit@1.6.0');
           state.smartAccount = await smartAccountModule.toMetaMaskSmartAccount({
             client: state.publicClient,
             implementation: smartAccountModule.Implementation.Hybrid,
@@ -317,7 +323,8 @@
             method: 'wallet_getSupportedExecutionPermissions',
             params: [],
           });
-          state.supportedPermissions = Array.isArray(supported) ? supported : [];
+          console.log('🚀 ~ supported:', supported);
+          state.supportedPermissions = supported;
           setPre('supported-info', { supported: state.supportedPermissions });
           log('wallet supports', state.supportedPermissions.length, 'permission types');
         } catch (e) {
@@ -386,7 +393,12 @@
               chainId: CHAIN_ID,
               skillId: skill.skillId,
               config,
-              pricingPlan: { id: 'mvp-free', label: 'MVP Free', durationDays: 30, skillFeeUsdc: '0' },
+              pricingPlan: {
+                id: 'mvp-free',
+                label: 'MVP Free',
+                durationDays: 30,
+                skillFeeUsdc: '0',
+              },
               schedule: { frequency: 'weekly' },
             }),
           });
@@ -465,9 +477,7 @@
           if (!state.lastGrantedContext || !state.lastDelegationManager) {
             throw new Error('run grant first to populate granted context + delegationManager');
           }
-          const chainInfo = state.capabilities?.chains?.find(
-            (c) => c.chainId === String(CHAIN_ID),
-          );
+          const chainInfo = state.capabilities?.chains?.find((c) => c.chainId === String(CHAIN_ID));
           const targetAddress = chainInfo?.targetAddress ?? state.feeData?.targetAddress;
           if (!targetAddress) throw new Error('1Shot did not return targetAddress');
           const permissionContextBytes = state.lastGrantedContext.startsWith('0x')
@@ -480,7 +490,9 @@
             transactions: [
               {
                 permissionContext: '0x' + permissionContextBytes,
-                executions: [{ target: state.smartAccount.address, value: '0x0', data: selfCallData }],
+                executions: [
+                  { target: state.smartAccount.address, value: '0x0', data: selfCallData },
+                ],
               },
             ],
           };

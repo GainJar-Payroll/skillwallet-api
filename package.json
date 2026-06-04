@@ -7,7 +7,8 @@
     "build": "nest build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --max-warnings=0",
-    "test": "bun test"
+    "test": "bun test",
+    "db:reset": "bun scripts/reset-db.ts"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.21",

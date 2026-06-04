@@ -46,12 +46,22 @@ const aerodromeVoteConfigSchema = z.object({
 });
 
 // /permissions/check-support
+// MetaMask wallet_getSupportedExecutionPermissions returns:
+//   { "erc20-token-periodic": { ruleTypes: string[], chainIds: string[] }, ... }
+// We also accept string[] for backwards compat.
+const walletPermissionTypeDescriptor = z.object({
+  ruleTypes: z.array(z.string()).optional(),
+  chainIds: z.array(z.string()).optional(),
+});
 export const checkSupportSchema = z.object({
   userAddress: addressField,
   smartAccountAddress: addressField,
   chainId: z.number().int().positive(),
   skillId: z.string().min(1),
-  walletReportedPermissions: z.array(z.string().min(1)),
+  walletReportedPermissions: z.union([
+    z.array(z.string().min(1)),
+    z.record(z.string().min(1), walletPermissionTypeDescriptor),
+  ]),
 });
 export type CheckSupportDto = z.infer<typeof checkSupportSchema>;
 
@@ -68,11 +78,13 @@ export const preparePermissionRequestSchema = z.object({
     durationDays: z.number().int().positive(),
     skillFeeUsdc: z.string().regex(/^\d+(\.\d+)?$/),
   }),
-  schedule: z.object({
-    frequency: z.enum(['daily', 'weekly', 'monthly']).optional(),
-    timezone: z.string().optional(),
-    startAt: z.string().datetime().optional(),
-  }),
+  schedule: z
+    .object({
+      frequency: z.enum(['daily', 'weekly', 'monthly']).optional(),
+      timezone: z.string().optional(),
+      startAt: z.string().datetime().optional(),
+    })
+    .optional(),
 });
 export type PreparePermissionRequestDto = z.infer<typeof preparePermissionRequestSchema>;
 

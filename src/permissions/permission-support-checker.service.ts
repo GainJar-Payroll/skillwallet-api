@@ -15,12 +15,16 @@ import { AppError } from '../common/errors/app-error';
 import { ErrorCode } from '../common/errors/error-codes';
 import { sha256Hex } from '../common/utils/hash';
 
+export type WalletReportedPermissions =
+  | string[]
+  | Record<string, { ruleTypes?: string[]; chainIds?: string[] }>;
+
 export interface CheckSupportInput {
   userAddress: string;
   smartAccountAddress: string;
   skillId: string;
   chainId: number;
-  walletReportedPermissions: string[];
+  walletReportedPermissions: WalletReportedPermissions;
 }
 
 export interface CheckSupportResult {
@@ -63,7 +67,11 @@ export class PermissionSupportCheckerService {
 
     const requirements = skill.permissionRequirements ?? [];
     const requirementsForChain = requirements.filter((r) => r.chainId === input.chainId);
-    const reported = new Set(input.walletReportedPermissions);
+    const reported = new Set(
+      Array.isArray(input.walletReportedPermissions)
+        ? input.walletReportedPermissions
+        : Object.keys(input.walletReportedPermissions),
+    );
 
     const matched: MatchedItem[] = [];
     const missing: MissingItem[] = [];
@@ -86,12 +94,13 @@ export class PermissionSupportCheckerService {
       }
     }
 
+    const sortedReported = [...reported].sort();
     const checkId = `check_${sha256Hex({
       user: input.userAddress,
       sa: input.smartAccountAddress,
       skill: input.skillId,
       chain: input.chainId,
-      reported: [...reported].sort(),
+      reported: sortedReported,
     }).slice(0, 32)}`;
 
     const check = await this.checkModel.create({
@@ -101,6 +110,7 @@ export class PermissionSupportCheckerService {
       skillId: input.skillId,
       chainId: input.chainId,
       walletReportedPermissions: input.walletReportedPermissions,
+      walletReportedPermissionTypes: sortedReported,
       matched,
       missing,
       checkedAt: new Date(),

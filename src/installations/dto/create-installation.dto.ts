@@ -56,11 +56,13 @@ export const createInstallationSchema = z.object({
     durationDays: z.number().int().positive(),
     skillFeeUsdc: z.string().regex(/^\d+(\.\d+)?$/),
   }),
-  schedule: z.object({
-    frequency: z.enum(['daily', 'weekly', 'monthly']).optional(),
-    timezone: z.string().optional(),
-    startAt: z.string().datetime().optional(),
-  }),
+  schedule: z
+    .object({
+      frequency: z.enum(['daily', 'weekly', 'monthly']).optional(),
+      timezone: z.string().optional(),
+      startAt: z.string().datetime().optional(),
+    })
+    .optional(),
   budget: z
     .object({
       totalUsdc: z

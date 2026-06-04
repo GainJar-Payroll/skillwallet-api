@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, SchemaTypes } from 'mongoose';
 
 @Schema({ _id: false })
 export class MatchedItem {
@@ -30,7 +30,12 @@ export class WalletSupportCheckRecord {
   @Prop({ required: true }) smartAccountAddress!: string;
   @Prop({ required: true, index: true }) skillId!: string;
   @Prop({ required: true, index: true }) chainId!: number;
-  @Prop({ type: [String], required: true }) walletReportedPermissions!: string[];
+  // Raw wallet response (object: { "erc20-token-periodic": { ruleTypes, chainIds } }) OR string[] for back-compat.
+  @Prop({ type: SchemaTypes.Mixed, required: true })
+  walletReportedPermissions!: unknown;
+  // Derived array of permission type names (sorted) — for stable matching + queries.
+  @Prop({ type: [String], default: [] })
+  walletReportedPermissionTypes!: string[];
   @Prop({ type: [MatchedItemSchema], default: [] }) matched!: MatchedItem[];
   @Prop({ type: [MissingItemSchema], default: [] }) missing!: MissingItem[];
   @Prop({ required: true }) checkedAt!: Date;

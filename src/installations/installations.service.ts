@@ -71,13 +71,16 @@ export class InstallationsService {
       dependencies: [],
       budget: input.budget ?? {},
       pricingPlan: input.pricingPlan,
-      schedule: {
-        nextRunAt: input.schedule.startAt ? new Date(input.schedule.startAt) : null,
-        lastRunAt: null,
-        expiresAt,
-        frequency: input.schedule.frequency,
-        timezone: input.schedule.timezone ?? 'UTC',
-      },
+      schedule: (() => {
+        const s = input.schedule ?? {};
+        return {
+          nextRunAt: s.startAt ? new Date(s.startAt) : null,
+          lastRunAt: null,
+          expiresAt,
+          frequency: s.frequency,
+          timezone: s.timezone ?? 'UTC',
+        };
+      })(),
       runtime: {
         lockedAt: null,
         lockReason: null,
