@@ -14,6 +14,12 @@ import { PolicyManifest } from '../policy/policy-types';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 
+interface GrantedResponse {
+  chainId: number;
+  context: string;
+  delegationManager: string;
+}
+
 @Injectable()
 export class RunnerService {
   private readonly logger = new Logger(RunnerService.name);
@@ -47,6 +53,17 @@ export class RunnerService {
     }
 
     try {
+      const failClosed = this.checkFailClosed(installation);
+      if (failClosed) {
+        return await this.markFailed(
+          installationId,
+          attempt.attemptId,
+          installation,
+          new AppError(ErrorCode.INVALID_STATE, failClosed, { installationId }),
+          'Fail-closed pre-check',
+        );
+      }
+
       const adapter = this.adapters.resolve(installation.adapter);
       const now = new Date();
 
@@ -70,12 +87,16 @@ export class RunnerService {
 
       await this.attempts.updateStatus(attempt.attemptId, 'policy_checking', { proposedAction });
       const manifest = installation.permissionManifest as unknown as PolicyManifest;
+      const granted = this.resolveGrantedResponse(installation);
       const policyResult = this.policy.validate(installation, proposedAction, {
         allowedTargets: manifest.allowedTargets ?? [],
         allowedSelectors: manifest.allowedSelectors ?? [],
         allowedTokens: manifest.allowedTokens ?? [],
         rules: manifest.rules ?? [],
         validUntil: manifest.validUntil,
+        grantedContext: granted?.context,
+        grantedDelegationManager: granted?.delegationManager,
+        grantedChainId: granted?.chainId,
       });
       if (!policyResult.ok) {
         await this.attempts.updateStatus(attempt.attemptId, 'blocked', {
@@ -94,25 +115,20 @@ export class RunnerService {
         return (await this.attempts.findById(attempt.attemptId))!;
       }
 
-      const delegationContext = this.resolveDelegationContext(installation);
-      if (!delegationContext) {
-        await this.attempts.updateStatus(attempt.attemptId, 'failed', {
-          error: 'missing delegation permissionContext on installation',
-        });
-        await this.activity.log({
+      if (!granted) {
+        return await this.markFailed(
           installationId,
-          attemptId: attempt.attemptId,
-          userAddress: installation.userAddress,
-          chainId: installation.chainId,
-          type: 'execution.failed',
-          message: 'Cannot relay: missing delegation permissionContext',
-        });
-        await this.installations.recordFailure(installationId, 'missing delegation context');
-        await this.scheduleNextRun(installation);
-        return (await this.attempts.findById(attempt.attemptId))!;
+          attempt.attemptId,
+          installation,
+          new AppError(
+            ErrorCode.MISSING_PERMISSION_CONTEXT,
+            'Cannot relay: installation has no usable granted PermissionResponse',
+          ),
+          'Missing granted permission',
+        );
       }
 
-      const bundle = this.buildBundle(installation, delegationContext, proposedAction);
+      const bundle = this.buildBundle(installation, granted, proposedAction);
 
       try {
         this.validator.validateShape(bundle);
@@ -187,8 +203,8 @@ export class RunnerService {
       try {
         relayResult = await this.relayer.relayDelegatedExecution({
           chainId: installation.chainId,
-          delegationManager: '',
-          permissionContext: delegationContext,
+          delegationManager: granted.delegationManager,
+          permissionContext: granted.context,
           call: {
             to: proposedAction.target,
             data: proposedAction.calldata,
@@ -268,6 +284,66 @@ export class RunnerService {
     }
   }
 
+  private checkFailClosed(installation: SkillInstallation): string | null {
+    if (installation.status !== 'active') {
+      return `installation status is "${installation.status}", not "active"`;
+    }
+    const grant = installation.walletPermissionGrant as
+      | { status?: string; responses?: GrantedResponse[]; expiresAt?: Date | string }
+      | undefined;
+    if (!grant) {
+      return 'installation has no walletPermissionGrant';
+    }
+    if (grant.status !== 'granted') {
+      return `grant status is "${grant.status ?? 'unknown'}", not "granted"`;
+    }
+    if (!grant.responses || grant.responses.length === 0) {
+      return 'grant has no PermissionResponse[]';
+    }
+    const response = grant.responses[0];
+    if (!response?.context || !response?.delegationManager) {
+      return 'granted PermissionResponse is missing context or delegationManager';
+    }
+    if (response.chainId !== installation.chainId) {
+      return `granted PermissionResponse chainId ${response.chainId} does not match installation chainId ${installation.chainId}`;
+    }
+    if (grant.expiresAt && new Date(grant.expiresAt).getTime() <= Date.now()) {
+      return `grant expired at ${new Date(grant.expiresAt).toISOString()}`;
+    }
+    const delegation = installation.delegation as
+      | { permissionContext?: string; delegationManager?: string }
+      | undefined;
+    if (!delegation?.permissionContext || !delegation?.delegationManager) {
+      return 'installation has no usable delegation record';
+    }
+    if (delegation.permissionContext !== response.context) {
+      return 'delegation permissionContext does not match granted PermissionResponse.context';
+    }
+    const dependencies = installation.dependencies ?? [];
+    const blocking = dependencies.find(
+      (dep) => dep.status === 'pending' || dep.status === 'deploying' || dep.status === 'failed',
+    );
+    if (blocking) {
+      return `dependency on chainId=${blocking.chainId} is in "${blocking.status}" state`;
+    }
+    return null;
+  }
+
+  private resolveGrantedResponse(installation: SkillInstallation): GrantedResponse | null {
+    const grant = installation.walletPermissionGrant as
+      | { responses?: GrantedResponse[]; status?: string }
+      | undefined;
+    if (!grant || grant.status !== 'granted' || !grant.responses) {
+      return null;
+    }
+    const response =
+      grant.responses.find((r) => r.chainId === installation.chainId) ?? grant.responses[0];
+    if (!response?.context || !response?.delegationManager) {
+      return null;
+    }
+    return response;
+  }
+
   private async markFailed(
     installationId: string,
     attemptId: string,
@@ -292,22 +368,17 @@ export class RunnerService {
     return (await this.attempts.findById(attemptId))!;
   }
 
-  private resolveDelegationContext(installation: SkillInstallation): string {
-    const grant = installation.walletPermissionGrant as { context?: string } | undefined;
-    const delegation = installation.delegation as { permissionContext?: string } | undefined;
-    return delegation?.permissionContext ?? grant?.context ?? '';
-  }
-
   private buildBundle(
     installation: SkillInstallation,
-    permissionContext: string,
+    granted: GrantedResponse,
     proposedAction: { target: string; calldata: string; value: string },
   ) {
     return {
       chainId: installation.chainId,
+      delegationManager: granted.delegationManager,
       transactions: [
         {
-          permissionContext: this.validator.parsePermissionContextString(permissionContext),
+          permissionContext: this.validator.parsePermissionContextString(granted.context),
           executions: [
             {
               target: proposedAction.target,

@@ -1,5 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import {
+  WalletSupportCheckRecord,
+  WalletSupportCheckSchema,
+} from '../../permissions/schemas/wallet-support-check.schema';
+import {
+  PermissionDependencyRecord,
+  PermissionDependencySchema,
+} from '../../permissions/schemas/permission-dependency.schema';
 
 export type SkillInstallationDocument = HydratedDocument<SkillInstallation>;
 
@@ -19,8 +27,11 @@ export class SkillInstallation {
     required: true,
     enum: [
       'draft',
+      'pending_support_check',
+      'support_checked',
       'pending_permission',
       'permission_granted',
+      'dependencies_pending',
       'active',
       'paused',
       'revoked',
@@ -32,8 +43,11 @@ export class SkillInstallation {
   status!: string;
   @Prop({ required: true, type: Object }) config!: Record<string, unknown>;
   @Prop({ required: true, type: Object }) permissionManifest!: Record<string, unknown>;
+  @Prop({ type: WalletSupportCheckSchema }) walletSupportCheck?: WalletSupportCheckRecord;
   @Prop({ type: Object }) walletPermissionRequest?: Record<string, unknown>;
   @Prop({ type: Object }) walletPermissionGrant?: Record<string, unknown>;
+  @Prop({ type: [PermissionDependencySchema], default: [] })
+  dependencies!: PermissionDependencyRecord[];
   @Prop({ type: Object }) delegation?: Record<string, unknown>;
   @Prop({ required: true, type: Object }) budget!: Record<string, unknown>;
   @Prop({ required: true, type: Object }) pricingPlan!: Record<string, unknown>;

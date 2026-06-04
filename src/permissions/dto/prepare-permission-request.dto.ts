@@ -45,7 +45,18 @@ const aerodromeVoteConfigSchema = z.object({
   allowAiExplanation: z.boolean(),
 });
 
+// /permissions/check-support
+export const checkSupportSchema = z.object({
+  userAddress: addressField,
+  smartAccountAddress: addressField,
+  chainId: z.number().int().positive(),
+  skillId: z.string().min(1),
+  walletReportedPermissions: z.array(z.string().min(1)),
+});
+export type CheckSupportDto = z.infer<typeof checkSupportSchema>;
+
 export const preparePermissionRequestSchema = z.object({
+  installationId: z.string().min(1).optional(),
   userAddress: addressField,
   smartAccountAddress: addressField,
   chainId: z.number().int().positive(),
@@ -63,14 +74,18 @@ export const preparePermissionRequestSchema = z.object({
     startAt: z.string().datetime().optional(),
   }),
 });
-
 export type PreparePermissionRequestDto = z.infer<typeof preparePermissionRequestSchema>;
 
-export const submitPermissionGrantSchema = z.object({
-  installationId: z.string().min(1),
-  rawGrantResponse: z.unknown(),
-  context: hexField.optional(),
-  delegationManager: addressField.optional(),
+// /permissions/grant
+const permissionResponseItemSchema = z.object({
+  chainId: z.union([z.string(), z.number()]),
+  chainIdHex: hexField.optional(),
+  from: addressField.optional(),
+  to: addressField.optional(),
+  permission: z.record(z.string(), z.unknown()),
+  rules: z.array(z.record(z.string(), z.unknown())).optional(),
+  context: hexField,
+  delegationManager: addressField,
   dependencies: z
     .array(
       z.object({
@@ -79,18 +94,36 @@ export const submitPermissionGrantSchema = z.object({
       }),
     )
     .optional(),
-  expiresAt: z.string().datetime().optional(),
-  normalizedPermissions: z
-    .array(
-      z.object({
-        chainId: z.union([z.string(), z.number()]),
-        from: addressField,
-        to: addressField.optional(),
-        permissionType: z.string(),
-        data: z.record(z.string(), z.unknown()).optional(),
-      }),
-    )
-    .optional(),
+  isAdjustmentAllowed: z.boolean().optional(),
 });
 
+export const submitPermissionGrantSchema = z.object({
+  installationId: z.string().min(1),
+  permissionResponses: z.array(permissionResponseItemSchema).min(1),
+  rawGrantResponse: z.unknown().optional(),
+});
 export type SubmitPermissionGrantDto = z.infer<typeof submitPermissionGrantSchema>;
+
+// /permissions/dependencies/report
+export const reportDependenciesSchema = z.object({
+  installationId: z.string().min(1),
+  dependencies: z.array(
+    z.object({
+      chainId: z.number().int().positive(),
+      factory: addressField.optional(),
+      factoryData: hexField.optional(),
+      deployedAddress: addressField.optional(),
+      txHash: hexField.optional(),
+      status: z.enum(['pending', 'deploying', 'deployed', 'failed', 'not_required']),
+      errorMessage: z.string().optional(),
+    }),
+  ),
+});
+export type ReportDependenciesDto = z.infer<typeof reportDependenciesSchema>;
+
+// /permissions/revoke
+export const revokePermissionSchema = z.object({
+  installationId: z.string().min(1),
+  reason: z.string().min(1).optional(),
+});
+export type RevokePermissionDto = z.infer<typeof revokePermissionSchema>;

@@ -25,6 +25,8 @@ export class WalletPermissionRequestRecord {
   @Prop({ required: true, index: true }) compiledFromManifestHash!: string;
   @Prop({ required: true, type: Object }) rawRequest!: Record<string, unknown>;
   @Prop({ required: true, type: Object }) normalized!: Record<string, unknown>;
+  @Prop({ type: [Object], default: [] })
+  rawRules?: Array<Record<string, unknown>>;
   @Prop({ required: true }) requestHash!: string;
   @Prop({ required: true }) requestedAt!: Date;
   @Prop() approvedAt?: Date;

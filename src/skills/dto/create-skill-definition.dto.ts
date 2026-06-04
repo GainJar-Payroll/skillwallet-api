@@ -34,16 +34,31 @@ const metadataSchema = z.object({
   riskLevel: z.enum(['low', 'medium', 'high']),
 });
 
+const permissionRequirementSchema = z.object({
+  chainId: z.number().int().positive(),
+  permissionType: z.string().min(1),
+  requiredRuleTypes: z.array(z.string().min(1)),
+  required: z.boolean().optional(),
+  description: z.string().optional(),
+});
+
 export const createSkillDefinitionSchema = z.object({
   skillId: z.string().min(1),
   slug: z.string().min(1),
   name: z.string().min(1),
   description: z.string().min(1),
-  adapter: z.enum(['dca', 'aerodrome-vote', 'lp-keeper', 'x402-research']),
-  status: z.enum(['live', 'adapter-ready', 'coming-soon', 'disabled']),
+  adapter: z.enum([
+    'dca',
+    'aerodrome-vote',
+    'lp-keeper',
+    'x402-research',
+    'internal-native-transfer-proof',
+  ]),
+  status: z.enum(['live', 'adapter-ready', 'coming-soon', 'disabled', 'internal']),
   supportedChains: z.array(z.number().int().positive()).min(1),
   defaultChainId: z.number().int().positive(),
   aiMode: z.enum(['none', 'optional', 'required']),
+  permissionRequirements: z.array(permissionRequirementSchema).optional(),
   permissionTemplate: z.record(z.string(), z.unknown()),
   pricing: pricingModelSchema,
   defaultSchedule: scheduleTemplateSchema,

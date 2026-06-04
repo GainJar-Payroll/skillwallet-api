@@ -15,6 +15,9 @@ function buildManifest(): PolicyManifest {
     allowedSelectors: [],
     allowedTokens: [USDC, WETH],
     validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    grantedContext: '0xdeadbeef',
+    grantedDelegationManager: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3',
+    grantedChainId: 8453,
     rules: [
       {
         id: 'r1',

@@ -68,6 +68,7 @@ export class InstallationsService {
       status: 'pending_permission',
       config: input.config as unknown as Record<string, unknown>,
       permissionManifest,
+      dependencies: [],
       budget: input.budget ?? {},
       pricingPlan: input.pricingPlan,
       schedule: {
@@ -122,16 +123,53 @@ export class InstallationsService {
     );
   }
 
-  async setPermissionGrant(
+  async setWalletSupportCheck(
+    installationId: string,
+    check: Record<string, unknown>,
+  ): Promise<void> {
+    await this.installationModel.updateOne(
+      { installationId },
+      { $set: { walletSupportCheck: check } },
+    );
+  }
+
+  async setPermissionGrantAndActivate(
     installationId: string,
     grant: Record<string, unknown>,
     delegation?: Record<string, unknown>,
   ): Promise<void> {
-    const update: Record<string, unknown> = { walletPermissionGrant: grant };
+    const update: Record<string, unknown> = {
+      walletPermissionGrant: grant,
+      status: 'active',
+    };
     if (delegation) {
       update.delegation = delegation;
     }
     await this.installationModel.updateOne({ installationId }, { $set: update });
+  }
+
+  async setPermissionGrantDependencies(
+    installationId: string,
+    grant: Record<string, unknown>,
+    delegation: Record<string, unknown> | undefined,
+    dependencies: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    const update: Record<string, unknown> = {
+      walletPermissionGrant: grant,
+      dependencies,
+      status: 'dependencies_pending',
+    };
+    if (delegation) {
+      update.delegation = delegation;
+    }
+    await this.installationModel.updateOne({ installationId }, { $set: update });
+  }
+
+  async updateDependencies(
+    installationId: string,
+    dependencies: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    await this.installationModel.updateOne({ installationId }, { $set: { dependencies } });
   }
 
   async lockInstallation(installationId: string, lockReason: string): Promise<boolean> {

@@ -244,6 +244,14 @@ POST /executors
             │
             ▼
 ┌──────────────────────────────────────────────────────────────────────┐
+│  POST /permissions/check-support (optional, pre-flight)              │
+│  → PermissionSupportCheckerService                                   │
+│     Compares wallet reported permissions against skill's             │
+│     permissionRequirements[]. Returns matched[] + missing[] + checkId│
+└──────────────────────────────────────────────────────────────────────┘
+            │
+            ▼
+┌──────────────────────────────────────────────────────────────────────┐
 │  POST /permissions/prepare                                           │
 │  → PermissionCompilerService                                         │
 │     1. Build PermissionManifest (SkillWallet app-level policy)      │
@@ -252,25 +260,47 @@ POST /executors
 │        - rules[] with enforcement: wallet-permission | backend-policy│
 │        - validAfter / validUntil                                     │
 │     2. Build ERC-7715 walletRequest (wallet standard)                │
-│        - chainId, from, to, expiry, permission{type, data}           │
-│     3. Hash: manifestHash, requestHash (stable for identical input)  │
+│        - chainId, from, permission{type, isAdjustmentAllowed, data}  │
+│        - rules[] (erc20-periodic-spend, expiry, etc.)                 │
+│     3. Persist installation (status='pending_permission')            │
+│     4. Returns permissionRequests[] ready for wallet_request…        │
 └──────────────────────────────────────────────────────────────────────┘
             │
             ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │  User signs in wallet/Snap                                           │
-│  → POST /permissions/grant with { context, delegationManager, …}     │
-│     1. Persist WalletPermissionGrantRecord (raw + normalized)        │
-│     2. Persist DelegationRecord (ERC-7710) if context + manager     │
-│     3. Activate SkillInstallation                                    │
+│  wallet_requestExecutionPermissions(permissionRequests)              │
+│  → wallet returns PermissionResponse[] with:                        │
+│     - context, delegationManager, permission, rules, dependencies    │
+└──────────────────────────────────────────────────────────────────────┘
+            │
+            ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  POST /permissions/grant with permissionResponses[]                  │
+│     1. Verify attenuation: isAdjustmentAllowed=false;                │
+│        periodAmount/periodDuration ≤ requested; type/chainId match   │
+│     2. Persist WalletPermissionGrantRecord (raw + normalized)        │
+│     3. Persist DelegationRecord (ERC-7710) per response             │
+│     4. Set status='active' (or 'dependencies_pending' if deps)      │
+└──────────────────────────────────────────────────────────────────────┘
+            │
+            ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  POST /permissions/dependencies/report (if any deps)                 │
+│     - Marks each dep as pending/deploying/deployed                   │
+│     - When all deployed: status='active'                             │
 └──────────────────────────────────────────────────────────────────────┘
             │
             ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Scheduler picks due installation → RunnerService                    │
-│     1. Adapter.buildAction → ProposedAction (server-side, no AI)     │
-│     2. PolicyValidatorService.validate → ok? blocked? (fail-closed)  │
-│     3. Relayer.relayDelegatedExecution → 1Shot                       │
+│     1. checkFailClosed() — fail if any of: status, grant, responses, │
+│        context, delegationManager, chainId match, expiry, delegation,│
+│        dependencies are missing/invalid                              │
+│     2. Adapter.buildAction → ProposedAction (server-side, no AI)     │
+│     3. PolicyValidatorService.validate → ok? blocked? (fail-closed)  │
+│     4. buildBundle() uses granted context + delegationManager        │
+│     5. Relayer.relayDelegatedExecution → 1Shot                       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -281,6 +311,65 @@ POST /executors
 - A successful runtime execution requires BOTH to pass: the manifest is validated server-side, and the wallet enforces the on-chain caveat.
 
 ---
+
+## Permission Endpoints (v2 ERC-7715-first)
+
+| Method | Path                                              | Purpose                                                                 |
+| ------ | ------------------------------------------------- | ----------------------------------------------------------------------- |
+| `POST` | `/permissions/check-support`                      | Pre-flight: does the wallet support the skill's `permissionRequirements[]`? Returns `{ matched[], missing[], checkId }`. |
+| `POST` | `/permissions/prepare`                            | Build `PermissionManifest` + ERC-7715 `walletRequest`. Persists installation (status=`pending_permission`). Returns `{ permissionRequests[] }` ready for `wallet_requestExecutionPermissions`. |
+| `POST` | `/permissions/grant`                              | Submit `permissionResponses[]` from wallet. Verifies attenuation (`isAdjustmentAllowed=false`, `periodAmount` ≤ requested, `type` + `chainId` match). Persists grant + delegation. Activates installation (or `dependencies_pending` if deps). |
+| `POST` | `/permissions/dependencies/report`                | Mark dependencies as `pending`/`deploying`/`deployed`/`failed`. Auto-activates installation when all deployed. |
+| `POST` | `/permissions/revoke`                             | Revoke permission + cascade to `DelegationRecord` (status=`revoked`). Calls `wallet_revokeExecutionPermission` from the client first. |
+| `GET`  | `/permissions/granted/:installationId`            | Read installation + grant + delegation by installationId.               |
+
+**Body for `POST /permissions/grant`:**
+
+```jsonc
+{
+  "installationId": "inst_…",
+  "permissionResponses": [
+    {
+      "chainId": 11155111,
+      "from": "0x…smartAccount…",
+      "permission": {
+        "type": "erc20-token-periodic",
+        "isAdjustmentAllowed": false,
+        "data": {
+          "tokenAddress": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+          "periodAmount": "10000000",
+          "periodDuration": 604800,
+          "startTime": 1700000000
+        }
+      },
+      "rules": [{ "type": "erc20-periodic-spend", "data": {…} }],
+      "context": "0x…",
+      "delegationManager": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+      "dependencies": []
+    }
+  ]
+}
+```
+
+**Attenuation rules enforced server-side:**
+
+- `permissionResponses[].permission.isAdjustmentAllowed === true` → reject
+- `permissionResponses[].permission.type` must match requested type
+- `permissionResponses[].chainId` must match installation `chainId`
+- `periodAmount` (when `type=erc20-token-periodic`) must be ≤ requested
+- `periodDuration` must be ≤ requested
+- `context` + `delegationManager` must be non-empty
+- `permissionResponses[].from` must match `smartAccountAddress` (if provided)
+
+**Skill `permissionRequirements[]`** (per-chain, on `SkillDefinition`):
+
+```ts
+{
+  chainId: 11155111,
+  permissionType: 'erc20-token-periodic',
+  requiredRuleTypes: ['erc20-periodic-spend', 'expiry'],
+}
+```
 
 ## Forbidden Actions → Positive Rules
 

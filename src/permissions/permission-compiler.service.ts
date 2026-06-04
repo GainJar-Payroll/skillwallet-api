@@ -200,6 +200,16 @@ export class PermissionCompilerService {
           justification: `SkillWallet DCA: spend up to ${input.config.amountPerRun} USDC per period for scheduled USDC to WETH DCA.`,
         },
       },
+      rules: [
+        {
+          type: 'erc20-periodic-spend',
+          data: rules[0]?.data,
+        },
+        {
+          type: 'expiry',
+          data: { validUntil: validUntil.toISOString() },
+        },
+      ],
     };
 
     const normalized = {
@@ -214,12 +224,7 @@ export class PermissionCompilerService {
           data: rawRequest.permission.data,
         },
       ],
-      rules: [
-        {
-          type: 'erc20-periodic-spend',
-          data: rules[0]?.data,
-        },
-      ],
+      rules: rawRequest.rules,
     };
 
     const walletRequest = {
@@ -312,6 +317,12 @@ export class PermissionCompilerService {
           executionWindow: input.config.executionWindow,
         },
       },
+      rules: [
+        {
+          type: 'expiry',
+          data: { validUntil: validUntil.toISOString() },
+        },
+      ],
     };
 
     const normalized = {
@@ -326,6 +337,7 @@ export class PermissionCompilerService {
           data: rawRequest.permission.data,
         },
       ],
+      rules: rawRequest.rules,
     };
 
     const walletRequest = {

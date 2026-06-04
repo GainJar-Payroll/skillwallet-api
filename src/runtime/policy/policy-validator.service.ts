@@ -46,6 +46,25 @@ export class PolicyValidatorService {
       }
     }
 
+    if (!manifest.grantedContext || !manifest.grantedDelegationManager) {
+      checkedRules.push({
+        ruleId: 'rule.granted-context-present',
+        ok: false,
+        message: 'Manifest is missing grantedContext or grantedDelegationManager',
+        enforcement: 'backend-policy',
+      });
+      return { ok: false, blockedReason: 'missing granted permission context', checkedRules };
+    }
+    if (manifest.grantedChainId !== undefined && manifest.grantedChainId !== installation.chainId) {
+      checkedRules.push({
+        ruleId: 'rule.granted-chain-match',
+        ok: false,
+        message: `granted chainId ${manifest.grantedChainId} does not match installation chainId ${installation.chainId}`,
+        enforcement: 'backend-policy',
+      });
+      return { ok: false, blockedReason: 'granted chain mismatch', checkedRules };
+    }
+
     if (manifest.allowedTargets.length > 0) {
       const targetLower = action.target.toLowerCase();
       const allowed = manifest.allowedTargets.some((t) => t.toLowerCase() === targetLower);
@@ -194,13 +213,15 @@ export class PolicyValidatorService {
         if (!periodAmount) {
           return { ...base, ok: false, message: 'Rule missing periodAmount' };
         }
-        const ok = actual ? BigInt(actual) <= BigInt(this.toBaseUnits(periodAmount, 6)) : false;
+        const cap = BigInt(this.toBaseUnits(periodAmount, 6));
+        const actualBig = actual ? BigInt(actual) : 0n;
+        const ok = actualBig > 0n && actualBig <= cap;
         return {
           ...base,
           ok,
           message: ok
             ? 'amountIn within period cap'
-            : `amountIn ${actual} exceeds period cap ${periodAmount}`,
+            : `amountIn ${actual ?? '0'} exceeds or equals zero vs period cap ${periodAmount}`,
         };
       }
       case 'no-unlimited-approval': {

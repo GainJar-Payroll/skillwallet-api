@@ -16,6 +16,22 @@ export const builtInSkills: CreateSkillDefinitionDto[] = [
     supportedChains: [...DCA_SUPPORTED_CHAINS],
     defaultChainId: 8453,
     aiMode: 'none',
+    permissionRequirements: [
+      {
+        chainId: 11155111,
+        permissionType: 'erc20-token-periodic',
+        requiredRuleTypes: ['expiry'],
+        required: true,
+        description: 'Spend limited USDC per period for scheduled DCA.',
+      },
+      {
+        chainId: 8453,
+        permissionType: 'erc20-token-periodic',
+        requiredRuleTypes: ['expiry'],
+        required: true,
+        description: 'Spend limited USDC per period for scheduled DCA.',
+      },
+    ],
     permissionTemplate: {
       type: 'skillwallet.permission.v1',
       defaultSelectors: [],

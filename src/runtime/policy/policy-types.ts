@@ -31,6 +31,9 @@ export interface PolicyManifest {
   allowedTokens: string[];
   rules: PolicyRule[];
   validUntil?: string | Date;
+  grantedContext?: string;
+  grantedDelegationManager?: string;
+  grantedChainId?: number;
 }
 
 export interface CheckedRule {
