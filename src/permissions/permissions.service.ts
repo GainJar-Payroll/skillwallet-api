@@ -169,6 +169,7 @@ export class PermissionsService {
       {
         chainId: toChainIdHex(input.chainId),
         from: input.smartAccountAddress,
+        to: executor.executorAddress,
         permission: rawRequest.permission,
         rules: rawRequest.rules ?? [],
       },
