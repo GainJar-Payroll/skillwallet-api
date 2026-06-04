@@ -11,9 +11,9 @@ import {
   MatchedItem,
   MissingItem,
 } from './schemas/wallet-support-check.schema';
+import { randomUUID } from 'crypto';
 import { AppError } from '../common/errors/app-error';
 import { ErrorCode } from '../common/errors/error-codes';
-import { sha256Hex } from '../common/utils/hash';
 
 export type WalletReportedPermissions =
   | string[]
@@ -95,13 +95,8 @@ export class PermissionSupportCheckerService {
     }
 
     const sortedReported = [...reported].sort();
-    const checkId = `check_${sha256Hex({
-      user: input.userAddress,
-      sa: input.smartAccountAddress,
-      skill: input.skillId,
-      chain: input.chainId,
-      reported: sortedReported,
-    }).slice(0, 32)}`;
+    // uuid per call: deterministic hash would collide on the unique checkId index.
+    const checkId = `check_${randomUUID()}`;
 
     const check = await this.checkModel.create({
       checkId,
