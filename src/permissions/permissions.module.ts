@@ -21,6 +21,7 @@ import { PermissionsController } from './permissions.controller';
 import { InstallationsModule } from '../installations/installations.module';
 import { SkillsModule } from '../skills/skills.module';
 import { ExecutorsModule } from '../executors/executors.module';
+import { SkillDefinition, SkillDefinitionSchema } from 'src/skills/schemas/skill-definition.schema';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ExecutorsModule } from '../executors/executors.module';
       { name: WalletPermissionGrantRecord.name, schema: WalletPermissionGrantSchema },
       { name: DelegationRecord.name, schema: DelegationRecordSchema },
       { name: WalletSupportCheckRecord.name, schema: WalletSupportCheckSchema },
+      { name: SkillDefinition.name, schema: SkillDefinitionSchema },
     ]),
     InstallationsModule,
     SkillsModule,

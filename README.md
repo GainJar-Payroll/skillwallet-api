@@ -31,7 +31,7 @@ NestJS backend for a MetaMask-native wallet skill marketplace. Users install "sk
               ┌─────────────────────────────────────────────────┐
               │         1Shot Relayer (gas-abstracted)           │
               │  JSON-RPC 2.0 over HTTPS (permissionless)       │
-              │  Ed25519-signed webhooks, JWKS-verified         │
+              │  send + poll via relayer_getStatus              │
               └─────────────────────────────────────────────────┘
 ```
 
@@ -94,13 +94,7 @@ bun run typecheck   # tsc --noEmit — must exit 0
 | `ONESHOT_NETWORK`                 | no       | `mainnet` \| `testnet` (default `testnet`). Derives relayer URL + chain ID.                                              |
 | `ONESHOT_RELAYER_URL`             | no       | Optional override for the relayer URL (default per network)                                                              |
 | `ONESHOT_PAYMENT_TOKEN_ADDRESS`   | no       | ERC-20 token used to pay 1Shot fees. Defaults to USDC on the active chain when unset.                                    |
-| `ONESHOT_DESTINATION_URL`         | no       | URL where 1Shot POSTs webhook callbacks (e.g. `https://host/runtime/oneshot/webhook`).                                   |
-| `ONESHOT_JWKS_URL`                | no       | Preferred webhook signature verifier. JWKS endpoint (cached 1h, key-id header lookup).                                   |
-| `ONESHOT_WEBHOOK_PUBLIC_KEY`      | no       | Fallback webhook verifier when JWKS fails. JWK JSON or base64 32-byte raw Ed25519 public key.                            |
-| `ONESHOT_API_KEY`                 | no       | v1 M2M account-level key (for `api.1shotapi.com/v0/...` only; Public Relayer is permissionless)                          |
-| `ONESHOT_API_SECRET`              | no       | v1 M2M account-level secret (paired with `ONESHOT_API_KEY`)                                                              |
-| `ONESHOT_RELAYER_WALLET`          | no       | EOA that holds the USDC paying 1Shot fees (testnet primary: `0x2c4E85173372AA9fb0F210F91b69aF92f87BE2B2` on eth sepolia) |
-| `ONESHOT_TESTNET_CHAIN_ID`        | no       | default `11155111` (eth sepolia). Used as `activeChainId` when `ONESHOT_NETWORK=testnet`                                 |
+| `ONESHOT_TESTNET_CHAIN_ID`        | no       | default `84532` (Base Sepolia). Used as `activeChainId` when `ONESHOT_NETWORK=testnet`                                   |
 | `ONESHOT_MAINNET_CHAIN_ID`        | no       | default `8453` (base). Used as `activeChainId` when `ONESHOT_NETWORK=mainnet`                                            |
 | **`ADMIN_API_KEY`**               | **yes**  | Random UUID. Sent as `x-api-key` header on admin-only routes.                                                            |
 
@@ -300,7 +294,7 @@ POST /executors
 │     2. Adapter.buildAction → ProposedAction (server-side, no AI)     │
 │     3. PolicyValidatorService.validate → ok? blocked? (fail-closed)  │
 │     4. buildBundle() uses granted context + delegationManager        │
-│     5. Relayer.relayDelegatedExecution → 1Shot                       │
+│     5. Relayer.send7710Transaction → 1Shot                           │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -467,7 +461,7 @@ The MetaMask Snap is the **signing surface** for ERC-7715 permissions and the **
 
 ## 1Shot Relayer
 
-The backend talks to 1Shot v2 — a **permissionless JSON-RPC API** at `https://relayer.1shotapi.{com,dev}/relayers`. The Public Relayer endpoint accepts requests without auth; the account-level `ONESHOT_API_KEY` + `ONESHOT_API_SECRET` are kept around for the v1 M2M contract-method API (`api.1shotapi.com/v0/...`) which uses a different bearer-token flow. The service is always wired; if the payment token is not configured and no default exists for the active chain, the affected endpoint returns typed `NOT_CONFIGURED`.
+The backend talks to 1Shot v2 — a **permissionless JSON-RPC API** at `https://relayer.1shotapi.{com,dev}/relayers`. The public relayer path used here does not require API keys, webhook destinations, or relayer-wallet config. The service is always wired; if the payment token is not configured and no default exists for the active chain, the affected endpoint returns typed `NOT_CONFIGURED`.
 
 > **14-phase hardening done.** All gates green: `build` 0 errors, `lint` 0/0, `typecheck` 0 errors, `bun test` 88 pass / 0 fail. See [EIP-7710 Bundle Hardening (14-phase)](#eip-7710-bundle-hardening-14-phase) below.
 
@@ -476,9 +470,9 @@ The backend talks to 1Shot v2 — a **permissionless JSON-RPC API** at `https://
 | Network   | Relayer URL                             | Active chain ID                                               |
 | --------- | --------------------------------------- | ------------------------------------------------------------- |
 | `mainnet` | `https://relayer.1shotapi.com/relayers` | `ONESHOT_MAINNET_CHAIN_ID` (default `8453` = Base)            |
-| `testnet` | `https://relayer.1shotapi.dev/relayers` | `ONESHOT_TESTNET_CHAIN_ID` (default `11155111` = eth sepolia) |
+| `testnet` | `https://relayer.1shotapi.dev/relayers` | `ONESHOT_TESTNET_CHAIN_ID` (default `84532` = Base Sepolia)   |
 
-The runner reads `getActiveChainId()` to know which chain to target. Override the URL with `ONESHOT_RELAYER_URL` if you need to point at a custom deployment.
+The active chain ID is derived from `ONESHOT_NETWORK` plus the matching chain-id env. Override the URL with `ONESHOT_RELAYER_URL` if you need to point at a custom deployment.
 
 **Payment model.** 1Shot charges fees in an **accepted ERC-20 per chain** (no native-token support). Discover accepted tokens via `relayer_getCapabilities [chainId]`. When `ONESHOT_PAYMENT_TOKEN_ADDRESS` is unset, the service defaults to USDC on the active chain:
 
@@ -488,8 +482,6 @@ The runner reads `getActiveChainId()` to know which chain to target. Override th
 | eth sepolia (11155111) | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
 | base (8453)            | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | base sepolia (84532)   | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-
-The EOA funding the USDC fees is configured via `ONESHOT_RELAYER_WALLET` (testnet primary: `0x2c4E85173372AA9fb0F210F91b69aF92f87BE2B2` on eth sepolia, has faucet funds).
 
 **Real verified round-trip (eth sepolia):**
 
@@ -516,7 +508,7 @@ The EOA funding the USDC fees is configured via `ONESHOT_RELAYER_WALLET` (testne
 }
 ```
 
-**JSON-RPC methods (1:1 wire mapping).** All requests are `POST {relayerUrl}/rpc` with a standard JSON-RPC 2.0 envelope.
+**JSON-RPC methods (1:1 wire mapping).** All requests are `POST {relayerUrl}` with a standard JSON-RPC 2.0 envelope.
 
 | Method                                      | Purpose                                                                |
 | ------------------------------------------- | ---------------------------------------------------------------------- |
@@ -545,12 +537,11 @@ The EOA funding the USDC fees is configured via `ONESHOT_RELAYER_WALLET` (testne
     /* EIP-7702 */
   ],
   "context": "0x…",
-  "taskId": "uuid",
-  "destinationUrl": "https://your-host/webhooks/oneshot",
+  "taskId": "uuid"
 }
 ```
 
-**Status codes** (numeric, returned by 1Shot + on the webhook):
+**Status codes** (numeric, returned by 1Shot status polling):
 
 | Code | Name      | Meaning                     |
 | ---- | --------- | --------------------------- |
@@ -570,12 +561,7 @@ The EOA funding the USDC fees is configured via `ONESHOT_RELAYER_WALLET` (testne
 | 4210 | `RELAYER_ERROR`      | user rejected                            |
 | 4211 | `RELAYER_ERROR`      | insufficient funds                       |
 
-**Webhooks.** 1Shot POSTs `POST /webhooks/oneshot` with an Ed25519-signed body. The verifier resolves the public key from one of two sources (in order):
-
-1. **JWKS** at `ONESHOT_JWKS_URL` (preferred) — cached for 1 hour, keys looked up by `key-id` header.
-2. **Static fallback** `ONESHOT_WEBHOOK_PUBLIC_KEY` — a JWK JSON object or a base64-encoded 32-byte raw Ed25519 public key.
-
-The controller verifies the signature over the **raw request body** (captured in `main.ts` via the express `verify` hook), looks up the matching `ExecutionAttempt` by `relay.taskId`, and patches `statusCode` / `txHash` / `errorCode` / `errorMessage` in place.
+**Status tracking.** The current backend uses polling only. After `relayer_send7710Transaction` returns a `taskId`, the runtime and proof flow call `relayer_getStatus` until the task settles. No webhook endpoint, signature verifier, or proof-side relay proxy is exposed.
 
 **`RelayRecord` (v2).** Embedded on every `ExecutionAttempt` that submitted a bundle:
 
@@ -596,7 +582,7 @@ The controller verifies the signature over the **raw request body** (captured in
 }
 ```
 
-**`POST /webhooks/oneshot` is the only way the relayer pushes back.** Until the webhook lands, the runner can still poll `relayer_getStatus` via `getRelayStatus(taskId)`.
+**Polling is the source of truth.** The runner records the `taskId` and continues via `relayer_getStatus` until the attempt settles.
 
 ---
 
@@ -614,7 +600,7 @@ The 1Shot integration was hardened in a 14-phase pass from "capability discovery
 - `OneShotBundleValidator` — shape + capabilities + context checks; rejects bundles containing `privateKey` / `priv_key` at the whole-bundle level
 - `OneShotRelayerService` — object-params wire shape, `relayer_send7710Transaction` / `relayer_estimate7710Transaction` / `relayer_getStatus`; 6 typed 1Shot error codes (4001 / 4200 / 4202 / 4204 / 4210 / 4211) mapped to `AppError`
 - Runner: **estimate-before-send**; verifies target + payment unchanged at relay time; fails closed on `EXPIRED_ONESHOT_CONTEXT` / `MISSING_ONESHOT_CONTEXT`
-- Webhook controller `POST /runtime/oneshot/webhook` — Ed25519-signed body verification, taskId correlation, `relay.taskId` → `ExecutionAttempt` patch, ActivityLog write
+- Polling-only status tracking — runtime records `taskId` and settles attempts through `relayer_getStatus`
 - `RelayRecord` carries `quoteContext` / `requiredPaymentAmountEstimate` / `method` for audit
 - **DCA fail-closed** — `DcaAdapter.buildAction()` throws `NOT_IMPLEMENTED`; no fake swap calldata
 - `scripts/oneshot-sepolia-proof.ts` — dev-only, requires `DEV_SEPOLIA_PRIVATE_KEY` env var (66-char 0x-prefixed), `process.exit(1)` if missing; never imported by backend
@@ -632,19 +618,6 @@ The 1Shot integration was hardened in a 14-phase pass from "capability discovery
 | `relayer_estimate7710TransactionMultichain` | `[{chainId, transactions[], ...}, ...]` |
 | `relayer_getStatus`                         | `{id, logs}`                            |
 
-**Webhook event → status code mapping:**
-
-| Event pattern                              | Status | ActivityLog type      |
-| ------------------------------------------ | ------ | --------------------- |
-| `*Reverted*`                               | 500    | `execution.failed`    |
-| `*Rejected*`                               | 400    | `execution.failed`    |
-| `*Submitted*`                              | 110    | `execution.relayed`   |
-| `*Success*` / `*Confirmed*` (status `0x1`) | 200    | `execution.confirmed` |
-| `*Success*` / `*Confirmed*` (status `0x0`) | 500    | `execution.failed`    |
-| fallback                                   | 100    | `execution.relayed`   |
-
----
-
 ## Real MetaMask Smart Accounts Kit + 1Shot Proof (HTML page)
 
 Dev-only browser page proving end-to-end that the SkillWallet backend + 1Shot v2 can carry a real signed EIP-7710 delegation from the user's MetaMask all the way to a relayer submission. **No Pimlico, no bundler, no paymaster, no mocks.**
@@ -656,17 +629,17 @@ bun run start:dev
 # then open http://localhost:4000/proof
 ```
 
-The page connects to your real MetaMask on Sepolia (11155111). Click through the 9 sections in order. Every artifact prints to a `<pre>` block; nothing is hidden.
+The page connects to your real MetaMask on Base Sepolia (84532). Click through the 9 sections in order. Every artifact prints to a `<pre>` block; nothing is hidden.
 
 ### Page flow (9 sections)
 
 | #   | Action                   | What it proves                                                                                                          |
 | --- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | 1   | Load skills              | `GET /skills` works + marketplace returns 2 built-in skills                                                             |
-| 2   | Connect MetaMask         | `window.ethereum` available + Sepolia chain switch                                                                      |
+| 2   | Connect MetaMask         | `window.ethereum` available + Base Sepolia chain switch                                                                 |
 | 3   | Create smart account     | `@metamask/smart-accounts-kit` `toMetaMaskSmartAccount` w/ `Implementation.Hybrid` works in the browser                 |
 | 4   | Verify DelegationManager | SDK `environment.DelegationManager` matches on-chain contract code; `eip712Domain()` returns valid name/version/chainId |
-| 5   | 1Shot capabilities + fee | Backend proxy (`POST /proof/relayer`) returns real `targetAddress` + `feeCollector` + `rate`/`minFee`/`expiry` for USDC |
+| 5   | 1Shot capabilities + fee | Browser calls the public 1Shot relayer directly and gets real `targetAddress` + `feeCollector` + `rate`/`minFee`/`expiry` for USDC |
 | 6   | Build + sign delegation  | `createDelegation` + `signDelegation` triggers MetaMask popup; signed delegation encodes to `permissionContext`         |
 | 7   | Estimate                 | `relayer_estimate7710Transaction` accepts the bundle and returns `requiredPaymentAmount`                                |
 | 8   | Send                     | `relayer_send7710Transaction` returns real `taskId`                                                                     |
@@ -680,20 +653,15 @@ Browser (real MetaMask extension)
     │  importmap → esm.sh (viem, @metamask/smart-accounts-kit, @metamask/delegation-abis)
     │
     ├── GET  /skills                (SkillWallet backend, same origin)
-    ├── POST /proof/relayer         (whitelisted JSON-RPC proxy to 1Shot)
-    │      └── 1ShotRelayerService  (relayer.1shotapi.dev/relayers)
-    └── POST /runtime/oneshot/webhook  (where 1Shot will POST the callback)
+    └── 1Shot public relayer        (relayer.1shotapi.dev/relayers)
 ```
 
 ### Backend proof surface
 
-| Route                   | Purpose                                                                                                                                                                                              |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET  /proof`           | Serves `public/proof.html` (single-page UI)                                                                                                                                                          |
-| `GET  /proof/style.css` | Serves `public/proof.css`                                                                                                                                                                            |
-| `POST /proof/relayer`   | JSON-RPC proxy. Method whitelist: `relayer_getCapabilities`, `relayer_getFeeData`, `relayer_estimate7710Transaction`, `relayer_send7710Transaction`, `relayer_getStatus`. Anything else returns 400. |
-
-The proxy exists for two reasons: (1) avoids CORS on direct 1Shot calls; (2) keeps one place to add server-side auth / rate limiting later. The proxy forwards to the existing `OneShotRelayerService` — no new relayer code.
+| Route                   | Purpose                                  |
+| ----------------------- | ---------------------------------------- |
+| `GET  /proof`           | Serves `public/proof.html` (single-page UI) |
+| `GET  /proof/style.css` | Serves `public/proof.css`                |
 
 ### File layout
 
@@ -702,10 +670,10 @@ public/
   proof.html          ← single page, importmap, 9 sections
   proof.css           ← minimal styling (header accent, focus-visible, hover transitions, status pills)
 src/runtime/proof/
-  proof.controller.ts ← GET /proof, GET /proof/style.css, POST /proof/relayer
-  proof.module.ts     ← imports RuntimeModule (so the proxy can talk to OneShotRelayerService)
+  proof.controller.ts ← GET /proof, GET /proof/style.css
+  proof.module.ts     ← static proof surface module
 test/
-  proof-controller.spec.ts ← 9 tests: HTML serves, CSS serves, 5 whitelisted proxy methods, 2 rejections
+  proof-controller.spec.ts ← HTML/CSS serving smoke tests
 ```
 
 ### Failure honesty (no fake success)

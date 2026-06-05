@@ -77,7 +77,11 @@ export class DcaAdapter implements SkillAdapter {
   }
 
   checkTrigger(ctx: AdapterContext): CheckTriggerResult {
-    const inst = ctx.installation;
+    const inst = ctx.installation as {
+      status?: string;
+      walletPermissionGrant?: unknown;
+      schedule?: { nextRunAt?: Date | null };
+    };
     if (inst.status !== 'active') {
       return { shouldRun: false, reason: `installation status is ${inst.status}` };
     }
@@ -87,7 +91,7 @@ export class DcaAdapter implements SkillAdapter {
     if (inst.schedule?.nextRunAt && inst.schedule.nextRunAt > ctx.now) {
       return { shouldRun: false, reason: 'nextRunAt is in the future' };
     }
-    return { shouldRun: true };
+    return { shouldRun: true, reason: 'schedule due' };
   }
 
   async buildAction(ctx: AdapterContext): Promise<BuildActionResult> {

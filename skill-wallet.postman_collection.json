@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "skill-wallet-collection-v1",
     "name": "SkillWallet Core Backend",
-    "description": "NestJS backend for the MetaMask-native wallet skill marketplace. Endpoints are organized by module: Health, Chains, Skills, Installations, Permissions, Executors, Runtime, and 1Shot webhooks.\n\n**Response envelope:** every response is wrapped in `{ payload, meta }` on success or `{ error, meta }` on failure. `meta.requestId` correlates to server logs and the `x-request-id` response header. `meta.timestamp` is ISO-8601 UTC.\n\n**Admin auth:** the routes below marked `(admin)` require the `x-api-key` header. The Postman environment has a non-empty `xApiKey` value sourced from `ADMIN_API_KEY` in `.env`. The webhook route is signed by 1Shot (Ed25519).\n\n**Variables:** `{{baseUrl}}` resolves from the environment file. Set `baseUrl` to `http://localhost:4000` for local dev. Path params and chain IDs are also exposed as variables — update them once per session.",
+    "description": "NestJS backend for the MetaMask-native wallet skill marketplace. Endpoints are organized by module: Health, Chains, Skills, Installations, Permissions, Executors, and Runtime.\n\n**Response envelope:** every response is wrapped in `{ payload, meta }` on success or `{ error, meta }` on failure. `meta.requestId` correlates to server logs and the `x-request-id` response header. `meta.timestamp` is ISO-8601 UTC.\n\n**Admin auth:** the routes below marked `(admin)` require the `x-api-key` header. The Postman environment has a non-empty `xApiKey` value sourced from `ADMIN_API_KEY` in `.env`.\n\n**Variables:** `{{baseUrl}}` resolves from the environment file. Set `baseUrl` to `http://localhost:4000` for local dev. Path params and chain IDs are also exposed as variables — update them once per session.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -531,71 +531,6 @@
               "host": ["{{baseUrl}}"],
               "path": ["runtime", "attempts", "{{attemptId}}"]
             }
-          }
-        }
-      ]
-    },
-    {
-      "name": "1Shot Webhook (signed)",
-      "item": [
-        {
-          "name": "Webhook with valid Ed25519 signature",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "signature", "value": "{{oneshotSignature}}", "description": "base64 Ed25519 signature over the raw body bytes" },
-              { "key": "key-id", "value": "{{oneshotKid}}", "description": "JWKS kid (optional; first key used if absent)" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"taskId\": \"{{taskId}}\",\n  \"statusCode\": 200,\n  \"txHash\": \"0x1111111111111111111111111111111111111111111111111111111111111111\",\n  \"externalStatusUrl\": \"https://relayer.1shotapi.dev/relayers/0xabc/tasks/{{taskId}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/webhooks/oneshot",
-              "host": ["{{baseUrl}}"],
-              "path": ["webhooks", "oneshot"]
-            },
-            "description": "Real 1Shot webhook. The controller verifies the Ed25519 signature against JWKS (`ONESHOT_JWKS_URL`) or fallback (`ONESHOT_WEBHOOK_PUBLIC_KEY`) and patches the `ExecutionAttempt` matching `taskId`. `oneshotSignature` and `oneshotKid` are set by 1Shot."
-          }
-        },
-        {
-          "name": "Webhook with bad signature (should 401)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "signature", "value": "deadbeef" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"taskId\": \"{{taskId}}\",\n  \"statusCode\": 200\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/webhooks/oneshot",
-              "host": ["{{baseUrl}}"],
-              "path": ["webhooks", "oneshot"]
-            },
-            "description": "Sanity test — server must reject with 401 `Invalid webhook signature`."
-          }
-        },
-        {
-          "name": "Webhook with no signature (should 401)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"taskId\": \"{{taskId}}\",\n  \"statusCode\": 200\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/webhooks/oneshot",
-              "host": ["{{baseUrl}}"],
-              "path": ["webhooks", "oneshot"]
-            },
-            "description": "Sanity test — server must reject with 401 `Missing webhook signature header`."
           }
         }
       ]

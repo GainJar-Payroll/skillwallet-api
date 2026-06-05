@@ -1,124 +1,111 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-// 1Shot v2 status code → textual status name
-export const RELAY_STATUS_NAMES = [
-  'not_submitted',
-  'pending',
-  'submitted',
-  'confirmed',
-  'rejected',
-  'reverted',
-  'failed',
-] as const;
-export type RelayStatusName = (typeof RELAY_STATUS_NAMES)[number];
-
-// 1Shot v2 numeric status codes
-export const RELAY_STATUS_CODES = [100, 110, 200, 400, 500] as const;
-export type RelayStatusCode = (typeof RELAY_STATUS_CODES)[number];
-
-// 1Shot / EIP-1193 error codes
-export const RELAY_ERROR_CODES = [4001, 4200, 4202, 4204, 4210, 4211] as const;
-export type RelayErrorCode = (typeof RELAY_ERROR_CODES)[number];
-
 export type ExecutionAttemptDocument = HydratedDocument<ExecutionAttempt>;
+export type ExecutionAttemptDoc = ExecutionAttemptDocument;
 
-export interface ProposedActionDecoded {
-  actionType: 'swap' | 'vote' | 'claim' | 'approve' | 'transfer' | 'unknown';
-  summary: string;
-  tokenIn?: string;
-  tokenOut?: string;
-  amountIn?: string;
-  minAmountOut?: string;
-  recipient?: string;
-  spender?: string;
+export type AttemptStatus =
+  | 'queued'
+  | 'checking_trigger'
+  | 'building_action'
+  | 'policy_checking'
+  | 'blocked'
+  | 'quoting'
+  | 'relaying'
+  | 'relayed'
+  | 'confirmed'
+  | 'failed'
+  | 'skipped';
+
+export type RelayStatusCode = 100 | 110 | 200 | 400 | 500;
+export type RelayStatusName = 'pending' | 'submitted' | 'confirmed' | 'rejected' | 'reverted';
+export type RelayErrorCode = 4001 | 4200 | 4202 | 4204 | 4210 | 4211;
+
+@Schema({ _id: false })
+export class ProposedAction {
+  @Prop() chainId?: number;
+  @Prop({ required: true }) target!: string;
+  @Prop({ required: true }) value!: string;
+  @Prop() data?: string;
+  @Prop({ required: true }) calldata!: string;
+  @Prop() selector?: string;
+  @Prop({ type: Object }) decoded?: Record<string, unknown>;
+  @Prop({ type: Object }) metadata?: Record<string, unknown>;
 }
+export const ProposedActionSchema = SchemaFactory.createForClass(ProposedAction);
 
-export interface ProposedAction {
-  chainId: number;
-  target: string;
-  value: string;
-  calldata: string;
-  selector: string;
-  decoded: ProposedActionDecoded;
-  metadata?: Record<string, unknown>;
+@Schema({ _id: false })
+export class ProposedExecution {
+  @Prop({ required: true }) description!: string;
+  @Prop({ type: [ProposedActionSchema], required: true })
+  actions!: ProposedAction[];
 }
+export const ProposedExecutionSchema = SchemaFactory.createForClass(ProposedExecution);
 
-/**
- * 1Shot v2 RelayRecord. The webhook controller patches this in place
- * (statusCode / txHash / errorCode / errorMessage) when 1Shot calls back.
- */
+@Schema({ _id: false })
+export class ProposedBundle {
+  @Prop({ required: true }) description!: string;
+  @Prop({ type: [ProposedExecutionSchema], required: true })
+  executions!: ProposedExecution[];
+}
+export const ProposedBundleSchema = SchemaFactory.createForClass(ProposedBundle);
+
+@Schema({ _id: false })
+export class RelayContext {
+  @Prop() environment?: string;
+  @Prop() relayerVersion?: string;
+}
+export const RelayContextSchema = SchemaFactory.createForClass(RelayContext);
+
 @Schema({ _id: false })
 export class RelayRecord {
-  @Prop({ required: true, default: '1shot' }) provider!: '1shot';
-
-  /** 1Shot task id (UUID) — key for webhook correlation + status polls.
-   *  Indexed via `ExecutionAttemptSchema.index({ 'relay.taskId': 1 })` below. */
-  @Prop({ required: true }) taskId!: string;
-
-  /** 1Shot numeric status code (100/110/200/400/500) */
-  @Prop({ required: true, type: Number, enum: RELAY_STATUS_CODES })
-  statusCode!: RelayStatusCode;
-
-  /** Textual name for the status code (for UIs/logs) */
-  @Prop({ required: true, type: String, enum: RELAY_STATUS_NAMES })
-  status!: RelayStatusName;
-
-  /** Target address the relayer is going to call (e.g. smart account
-   *  or DelegationManager). 1Shot-decided. */
-  @Prop({ required: true }) targetAddress!: string;
-
-  /** ERC-20 token used to pay 1Shot fees (USDC by default) */
-  @Prop({ required: true }) paymentToken!: string;
-
-  /** Required payment in atomic units (base-10 string) */
-  @Prop({ required: true }) requiredPaymentAmount!: string;
-
-  /** Opaque 1Shot context blob (echoed from the bundle) */
-  @Prop() context?: string;
-
-  /** On-chain tx hash (set when statusCode >= 200) */
+  @Prop({ type: String, enum: ['1shot'], default: '1shot' })
+  provider?: '1shot';
+  @Prop() taskId?: string;
+  @Prop({ type: Number, enum: [100, 110, 200, 400, 500] })
+  statusCode?: RelayStatusCode;
+  @Prop({
+    type: String,
+    enum: ['pending', 'submitted', 'confirmed', 'rejected', 'reverted'],
+  })
+  status?: RelayStatusName;
+  @Prop() targetAddress?: string;
+  @Prop() paymentToken?: string;
+  @Prop() requiredPaymentAmount?: string;
+  @Prop({ type: RelayContextSchema }) context?: RelayContext;
   @Prop() txHash?: string;
-
-  /** 1Shot / EIP-1193 error code (set when statusCode >= 400) */
-  @Prop({ type: Number, enum: RELAY_ERROR_CODES }) errorCode?: RelayErrorCode;
-
-  /** Human-readable error message (set when statusCode >= 400) */
+  @Prop({ type: Object }) receipt?: Record<string, unknown>;
+  @Prop({ type: Number }) errorCode?: number;
   @Prop() errorMessage?: string;
-
-  /** URL where the user can watch the task on 1Shot's UI */
-  @Prop() externalStatusUrl?: string;
-
-  /** Signed price-lock quote from `relayer_estimate7710Transaction`. Persisted
-   *  at send-time so the audit trail can prove the exact fee context the bundle
-   *  was relayed against. */
-  @Prop() quoteContext?: string;
-
-  /** Required fee in paymentTokenAddress atomic units from the estimate. */
-  @Prop() requiredPaymentAmountEstimate?: string;
-
-  /** 1Shot method used for the relay send (`relayer_send7710Transaction`
-   *  | `relayer_sendTransaction` | `…`). */
-  @Prop() method?: string;
+  @Prop({ type: String, enum: ['relayer_send7710Transaction'] })
+  method?: 'relayer_send7710Transaction';
 }
-
 export const RelayRecordSchema = SchemaFactory.createForClass(RelayRecord);
+
+@Schema({ _id: false })
+export class AttemptError {
+  @Prop() code?: string;
+  @Prop() message?: string;
+}
+export const AttemptErrorSchema = SchemaFactory.createForClass(AttemptError);
 
 @Schema({ timestamps: true, collection: 'execution_attempts' })
 export class ExecutionAttempt {
   @Prop({ required: true, unique: true, index: true }) attemptId!: string;
   @Prop({ required: true, index: true }) installationId!: string;
-  @Prop({ required: true }) skillId!: string;
-  @Prop({ required: true }) adapter!: string;
+  @Prop({ required: true, index: true }) skillType!: string;
   @Prop({ required: true, index: true }) chainId!: number;
+  @Prop({ required: true }) userAddress!: string;
   @Prop({
     required: true,
+    type: String,
     enum: [
       'queued',
       'checking_trigger',
       'building_action',
       'policy_checking',
       'blocked',
+      'quoting',
       'relaying',
       'relayed',
       'confirmed',
@@ -127,17 +114,14 @@ export class ExecutionAttempt {
     ],
     index: true,
   })
-  status!: string;
-  @Prop() triggerReason?: string;
-  @Prop({ type: Object }) proposedAction?: ProposedAction;
-  @Prop({ type: Object }) policyResult?: Record<string, unknown>;
+  status!: AttemptStatus;
+  @Prop({ type: ProposedBundleSchema }) proposed?: ProposedBundle;
   @Prop({ type: RelayRecordSchema }) relay?: RelayRecord;
-  @Prop() error?: string;
+  @Prop({ type: AttemptErrorSchema }) error?: AttemptError;
 }
 
 export const ExecutionAttemptSchema = SchemaFactory.createForClass(ExecutionAttempt);
 ExecutionAttemptSchema.index({ installationId: 1, createdAt: -1 });
 ExecutionAttemptSchema.index({ status: 1, createdAt: -1 });
 ExecutionAttemptSchema.index({ chainId: 1, status: 1 });
-// Lookup attempts by their 1Shot taskId (for webhook status updates)
 ExecutionAttemptSchema.index({ 'relay.taskId': 1 }, { sparse: true });

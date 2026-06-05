@@ -21,10 +21,21 @@ export function frequencyToPeriodSeconds(frequency: 'daily' | 'weekly' | 'monthl
   }
 }
 
+export function nextRunFromFrequency(frequency: 'daily' | 'weekly' | 'monthly', from: Date): Date;
+export function nextRunFromFrequency(from: Date, frequency: 'daily' | 'weekly' | 'monthly'): Date;
 export function nextRunFromFrequency(
-  from: Date | null,
+  arg1: Date | 'daily' | 'weekly' | 'monthly',
+  arg2: Date | 'daily' | 'weekly' | 'monthly',
+): Date {
+  const frequency = (arg1 instanceof Date ? arg2 : arg1) as 'daily' | 'weekly' | 'monthly';
+  const from = (arg1 instanceof Date ? arg1 : arg2) as Date;
+  return new Date(from.getTime() + frequencyToPeriodSeconds(frequency) * 1000);
+}
+
+export function nextRunFromNullable(
+  from: Date | null | undefined,
   frequency: 'daily' | 'weekly' | 'monthly',
 ): Date | null {
   if (!from) return null;
-  return new Date(from.getTime() + frequencyToPeriodSeconds(frequency) * 1000);
+  return nextRunFromFrequency(frequency, from);
 }

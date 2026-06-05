@@ -32,15 +32,60 @@ const statusByCode: Record<ErrorCode, HttpStatus> = {
   [ErrorCode.ADAPTER_NOT_ALLOWED_ADJUSTMENT]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ErrorCode.OVER_ATTENUATION]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ErrorCode.ATTENUATION_MISMATCH]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [ErrorCode.WALLET_PERMISSION_RESPONSE_REQUIRED]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.INVALID_WALLET_PERMISSION_RESPONSE]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.CHAIN_UNSUPPORTED]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.BAD_CHAIN_ID]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.TOKEN_NOT_IN_REGISTRY]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.ROUTER_MISMATCH]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.CONFIG_INVALID]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.AMOUNT_INVALID]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.NO_ACTIVE_GRANT]: HttpStatus.PRECONDITION_FAILED,
+  [ErrorCode.BUNDLE_REJECTED]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.RELAYER_UNSUPPORTED_CHAIN]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.RELAYER_UNSUPPORTED_TOKEN]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.RELAYER_TRANSPORT_ERROR]: HttpStatus.BAD_GATEWAY,
+  [ErrorCode.RELAYER_BAD_RESPONSE]: HttpStatus.BAD_GATEWAY,
+  [ErrorCode.RELAYER_RPC_ERROR]: HttpStatus.BAD_GATEWAY,
+  [ErrorCode.METHOD_NOT_WHITELISTED]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.INSTALLATION_NOT_FOUND]: HttpStatus.NOT_FOUND,
+  [ErrorCode.CHAIN_MISMATCH]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.DELEGATOR_MISMATCH]: HttpStatus.FORBIDDEN,
+  [ErrorCode.DELEGATION_DELEGATOR_MISMATCH]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.DELEGATION_DELEGATE_MISMATCH]: HttpStatus.BAD_REQUEST,
+  [ErrorCode.POLICY_RULE_UNKNOWN]: HttpStatus.INTERNAL_SERVER_ERROR,
+  [ErrorCode.RUNNER_ERROR]: HttpStatus.INTERNAL_SERVER_ERROR,
 };
 
 export class AppError extends HttpException {
   readonly code: ErrorCode;
   readonly details?: unknown;
 
-  constructor(code: ErrorCode, message: string, details?: unknown) {
-    super({ code, message, details }, statusByCode[code]);
+  constructor(code: ErrorCode, message: string, details?: unknown);
+  constructor(code: ErrorCode, status: HttpStatus, message: string, details?: unknown);
+  constructor(
+    code: ErrorCode,
+    statusOrMessage: HttpStatus | string,
+    messageOrDetails?: string | unknown,
+    details?: unknown,
+  ) {
+    const status =
+      typeof statusOrMessage === 'number' ? statusOrMessage : (statusByCode[code] ?? 500);
+    const message =
+      typeof statusOrMessage === 'number'
+        ? (messageOrDetails as string)
+        : (statusOrMessage as string);
+    const resolvedDetails = typeof statusOrMessage === 'number' ? details : messageOrDetails;
+    super({ code, message, details: resolvedDetails }, status);
     this.code = code;
-    this.details = details;
+    this.details = resolvedDetails;
+  }
+
+  static notConfigured(what: string, why: string): AppError {
+    return new AppError(ErrorCode.NOT_CONFIGURED, `${what} not configured: ${why}`);
+  }
+
+  static notFound(what: string): AppError {
+    return new AppError(ErrorCode.NOT_FOUND, `${what} not found`);
   }
 }

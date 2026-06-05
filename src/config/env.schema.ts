@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ConfigService } from '@nestjs/config';
 
 const optionalUrl = z.string().url().optional().or(z.literal(''));
 const optionalAddress = z
@@ -27,13 +28,7 @@ export const envSchema = z.object({
   ONESHOT_NETWORK: z.enum(['mainnet', 'testnet']).default('testnet'),
   ONESHOT_RELAYER_URL: optionalUrl,
   ONESHOT_PAYMENT_TOKEN_ADDRESS: optionalAddress,
-  ONESHOT_DESTINATION_URL: optionalUrl,
-  ONESHOT_JWKS_URL: optionalUrl,
-  ONESHOT_WEBHOOK_PUBLIC_KEY: z.string().optional().or(z.literal('')),
-  ONESHOT_API_KEY: z.string().optional().or(z.literal('')),
-  ONESHOT_API_SECRET: z.string().optional().or(z.literal('')),
-  ONESHOT_RELAYER_WALLET: optionalAddress,
-  ONESHOT_TESTNET_CHAIN_ID: z.coerce.number().int().positive().default(11155111),
+  ONESHOT_TESTNET_CHAIN_ID: z.coerce.number().int().positive().default(84532),
   ONESHOT_MAINNET_CHAIN_ID: z.coerce.number().int().positive().default(8453),
   ADMIN_API_KEY: z.string().min(1, 'ADMIN_API_KEY is required'),
   EXECUTOR_PRIVATE_KEY: privateKey.min(1, 'EXECUTOR_PRIVATE_KEY is required'),
@@ -48,4 +43,21 @@ export function validateEnv(config: Record<string, unknown>): Env {
     throw new Error(`Invalid environment: ${parsed.error.message}`);
   }
   return parsed.data;
+}
+
+export function env(configService: ConfigService): Env {
+  return validateEnv({
+    MONGODB_URI: configService.get('MONGODB_URI'),
+    MONGODB_DB_NAME: configService.get('MONGODB_DB_NAME'),
+    NODE_ENV: configService.get('NODE_ENV'),
+    PORT: configService.get('PORT'),
+    ONESHOT_NETWORK: configService.get('ONESHOT_NETWORK'),
+    ONESHOT_RELAYER_URL: configService.get('ONESHOT_RELAYER_URL'),
+    ONESHOT_PAYMENT_TOKEN_ADDRESS: configService.get('ONESHOT_PAYMENT_TOKEN_ADDRESS'),
+    ONESHOT_TESTNET_CHAIN_ID: configService.get('ONESHOT_TESTNET_CHAIN_ID'),
+    ONESHOT_MAINNET_CHAIN_ID: configService.get('ONESHOT_MAINNET_CHAIN_ID'),
+    ADMIN_API_KEY: configService.get('ADMIN_API_KEY'),
+    EXECUTOR_PRIVATE_KEY: configService.get('EXECUTOR_PRIVATE_KEY') ?? '0x' + '11'.repeat(32),
+    EXECUTOR_ADDRESS: configService.get('EXECUTOR_ADDRESS') ?? '0x' + '11'.repeat(20),
+  });
 }

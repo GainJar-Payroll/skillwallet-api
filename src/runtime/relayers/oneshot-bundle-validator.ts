@@ -58,22 +58,23 @@ export class OneShotBundleValidator {
     if (!caps) {
       caps = await fetchCapabilities(ctx.chainId);
     }
-    const chain = caps.chains.find((c) => Number(c.chainId) === ctx.chainId);
+    const chains = caps.chains ?? [];
+    const chain = chains.find((c) => Number(c.chainId) === ctx.chainId);
     if (!chain) {
       throw new AppError(
         ErrorCode.ONESHOT_CAPABILITY_UNSUPPORTED,
         `1Shot does not advertise chainId ${ctx.chainId} in capabilities`,
-        { advertisedChains: caps.chains.map((c) => c.chainId) },
+        { advertisedChains: chains.map((c) => c.chainId) },
       );
     }
-    const tokenOk = chain.tokens.some(
+    const tokenOk = (chain.tokens ?? []).some(
       (t) => t.address.toLowerCase() === ctx.paymentTokenAddress.toLowerCase(),
     );
     if (!tokenOk) {
       throw new AppError(
         ErrorCode.ONESHOT_PAYMENT_TOKEN_UNSUPPORTED,
         `Payment token ${ctx.paymentTokenAddress} not accepted on chainId ${ctx.chainId}`,
-        { accepted: chain.tokens.map((t) => t.address) },
+        { accepted: (chain.tokens ?? []).map((t) => t.address) },
       );
     }
   }
@@ -208,10 +209,11 @@ export class OneShotBundleValidator {
           `${prefix}.executions[${k}].value is not valid hex: ${String(e.value)}`,
         );
       }
-      if (!isHex(e.data)) {
+      const data = e.data ?? e.callData;
+      if (!isHex(data)) {
         throw new AppError(
           ErrorCode.INVALID_ONESHOT_BUNDLE,
-          `${prefix}.executions[${k}].data is not valid hex: ${String(e.data)}`,
+          `${prefix}.executions[${k}].data is not valid hex: ${String(data)}`,
         );
       }
     }
@@ -228,8 +230,42 @@ export class OneShotBundleValidator {
   }
 
   pickPaymentToken(capabilities: OneShotCapabilities, chainId: number): OneShotTokenInfo | null {
-    const chain = capabilities.chains.find((c) => Number(c.chainId) === chainId);
+    const chain = (capabilities.chains ?? []).find((c) => Number(c.chainId) === chainId);
     if (!chain) return null;
-    return chain.tokens[0] ?? null;
+    return chain.tokens?.[0] ?? null;
+  }
+}
+
+export function validateBundleShape(bundle: Bundle7710): void {
+  new OneShotBundleValidator().validateShape(bundle);
+}
+
+export function assertChainSupportedByCapabilities(
+  capabilities: OneShotCapabilities,
+  chainId: number,
+): void {
+  const chains = capabilities.chains ?? capabilities.data?.chains ?? [];
+  const found = chains.find((chain) => Number(chain.chainId) === chainId);
+  if (!found) {
+    throw new AppError(
+      ErrorCode.ONESHOT_CAPABILITY_UNSUPPORTED,
+      `1Shot does not advertise chainId ${chainId} in capabilities`,
+    );
+  }
+}
+
+export function assertPaymentTokenSupported(
+  capabilities: OneShotCapabilities,
+  chainId: number,
+  paymentToken: string,
+): void {
+  const chains = capabilities.chains ?? capabilities.data?.chains ?? [];
+  const found = chains.find((chain) => Number(chain.chainId) === chainId);
+  const accepted = found?.tokens ?? [];
+  if (!accepted.some((token) => token.address.toLowerCase() === paymentToken.toLowerCase())) {
+    throw new AppError(
+      ErrorCode.ONESHOT_PAYMENT_TOKEN_UNSUPPORTED,
+      `Payment token ${paymentToken} not accepted on chainId ${chainId}`,
+    );
   }
 }

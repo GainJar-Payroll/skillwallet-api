@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { DEFAULT_PAYMENT_TOKEN_BY_CHAIN, Env } from '../../config/env.schema';
+import type { Address } from '../../common/types/evm';
 import { AppError } from '../../common/errors/app-error';
 import { ErrorCode } from '../../common/errors/error-codes';
 import {
@@ -9,22 +10,17 @@ import {
   MultichainBundle7710,
   OneShotCapabilities,
   OneShotChainCapability,
-  OneShotDelegatedTransaction,
   OneShotErrorCode,
   OneShotEstimateResult,
-  OneShotExecution,
   OneShotFeeData,
   OneShotSendResult,
   OneShotStatusCode,
   OneShotStatusName,
   OneShotStatusResult,
   OneShotTokenInfo,
-  RelayInput,
-  RelaySubmissionResult,
   RelayerInterface,
   RelayerStatusResult,
 } from './relayer.interface';
-import { WebhookSignatureVerifier } from './webhook-signature-verifier.service';
 import { OneShotBundleValidator } from './oneshot-bundle-validator';
 
 const ONESHOT_NETWORK_URLS = {
@@ -61,15 +57,10 @@ export class OneShotRelayerService implements RelayerInterface {
   private readonly relayerUrl: string;
   private readonly network: 'mainnet' | 'testnet';
   private readonly paymentTokenAddress: string;
-  private readonly destinationUrl: string;
-  private readonly apiKey: string;
-  private readonly apiSecret: string;
-  private readonly relayerWallet: string;
   private readonly activeChainId: number;
 
   constructor(
     private readonly config: ConfigService<Env, true>,
-    private readonly webhookVerifier: WebhookSignatureVerifier,
     private readonly validator: OneShotBundleValidator,
   ) {
     this.network = this.config.get('ONESHOT_NETWORK', { infer: true });
@@ -86,22 +77,10 @@ export class OneShotRelayerService implements RelayerInterface {
       explicitToken && explicitToken.length > 0
         ? explicitToken
         : (DEFAULT_PAYMENT_TOKEN_BY_CHAIN[this.activeChainId] ?? '');
-    this.destinationUrl = this.config.get('ONESHOT_DESTINATION_URL', { infer: true });
-    this.apiKey = this.config.get('ONESHOT_API_KEY', { infer: true });
-    this.apiSecret = this.config.get('ONESHOT_API_SECRET', { infer: true });
-    this.relayerWallet = this.config.get('ONESHOT_RELAYER_WALLET', { infer: true });
   }
 
   getPaymentTokenAddress(): string {
     return this.paymentTokenAddress;
-  }
-
-  getRelayerWallet(): string {
-    return this.relayerWallet;
-  }
-
-  getActiveChainId(): number {
-    return this.activeChainId;
   }
 
   private ensureConfigured(requirePayment = false): void {
@@ -113,19 +92,8 @@ export class OneShotRelayerService implements RelayerInterface {
     }
   }
 
-  private resolveDestinationUrl(bundle: { destinationUrl?: string }): string {
-    return bundle.destinationUrl ?? this.destinationUrl ?? '';
-  }
-
   private buildHeaders(): Record<string, string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.apiKey && this.apiKey.length > 0) {
-      headers['x-api-key'] = this.apiKey;
-    }
-    if (this.apiSecret && this.apiSecret.length > 0) {
-      headers['x-api-secret'] = this.apiSecret;
-    }
-    return headers;
+    return { 'Content-Type': 'application/json' };
   }
 
   private async rpc<T>(method: string, params: unknown): Promise<T> {
@@ -221,14 +189,21 @@ export class OneShotRelayerService implements RelayerInterface {
     return { chains, raw };
   }
 
-  async getFeeData(bundle: Bundle7710): Promise<OneShotFeeData> {
+  async getFeeData(
+    bundleOrParams: Bundle7710 | { chainId: number; paymentToken: Address },
+  ): Promise<OneShotFeeData> {
     this.ensureConfigured(true);
+    const resolvedChainId = bundleOrParams.chainId;
+    const paymentToken =
+      'paymentToken' in bundleOrParams && typeof bundleOrParams.paymentToken === 'string'
+        ? bundleOrParams.paymentToken
+        : this.paymentTokenAddress;
     const raw = await this.rpc<Record<string, unknown>>('relayer_getFeeData', {
-      chainId: String(bundle.chainId),
-      token: this.paymentTokenAddress,
+      chainId: String(resolvedChainId),
+      token: paymentToken,
     });
     return {
-      chainId: String(raw.chainId ?? bundle.chainId),
+      chainId: String(raw.chainId ?? resolvedChainId),
       token: {
         address: ((raw.token as Record<string, unknown> | undefined)?.address as string) ?? '',
         decimals:
@@ -249,8 +224,11 @@ export class OneShotRelayerService implements RelayerInterface {
     };
   }
 
-  async estimate7710Transaction(bundle: Bundle7710): Promise<OneShotEstimateResult> {
+  async estimate7710Transaction(
+    bundleOrParams: Bundle7710 | { chainId: number; bundle: Bundle7710 },
+  ): Promise<OneShotEstimateResult> {
     this.ensureConfigured(true);
+    const bundle = 'bundle' in bundleOrParams ? bundleOrParams.bundle : bundleOrParams;
     return this.estimateSingle(bundle);
   }
 
@@ -300,13 +278,11 @@ export class OneShotRelayerService implements RelayerInterface {
     };
   }
 
-  async send7710Transaction(bundle: Bundle7710): Promise<OneShotSendResult> {
+  async send7710Transaction(
+    bundleOrParams: Bundle7710 | { chainId: number; bundle: Bundle7710 },
+  ): Promise<OneShotSendResult> {
     this.ensureConfigured(true);
-    if (!this.resolveDestinationUrl(bundle)) {
-      this.logger.warn(
-        '1Shot send: no destinationUrl set (env or bundle); webhook will not fire. Use relayer_getStatus to poll.',
-      );
-    }
+    const bundle = 'bundle' in bundleOrParams ? bundleOrParams.bundle : bundleOrParams;
     const params = this.buildSendParams(bundle);
     const raw = await this.rpc<string>('relayer_send7710Transaction', params);
     return { taskId: raw, raw };
@@ -314,11 +290,6 @@ export class OneShotRelayerService implements RelayerInterface {
 
   async send7710TransactionMultichain(bundle: MultichainBundle7710): Promise<OneShotSendResult> {
     this.ensureConfigured(true);
-    if (!this.resolveDestinationUrl(bundle)) {
-      this.logger.warn(
-        '1Shot send multichain: no destinationUrl set; webhook will not fire. Use relayer_getStatus to poll.',
-      );
-    }
     const params = this.buildMultichainSendParams(bundle);
     const raw = await this.rpc<string>('relayer_send7710TransactionMultichain', params);
     return { taskId: raw, raw };
@@ -329,11 +300,6 @@ export class OneShotRelayerService implements RelayerInterface {
     tx: { to: string; data: string; value?: string };
   }): Promise<OneShotSendResult> {
     this.ensureConfigured(true);
-    if (!this.destinationUrl) {
-      this.logger.warn(
-        '1Shot sendTransaction: no destinationUrl set; webhook will not fire. Use relayer_getStatus to poll.',
-      );
-    }
     const raw = await this.rpc<string>('relayer_sendTransaction', {
       chainId: String(bundle.chainId),
       payment: {
@@ -344,7 +310,6 @@ export class OneShotRelayerService implements RelayerInterface {
       data: bundle.tx.data,
       value: bundle.tx.value ?? '0x0',
       taskId: randomUUID(),
-      destinationUrl: this.destinationUrl,
     });
     return { taskId: raw, raw };
   }
@@ -429,75 +394,6 @@ export class OneShotRelayerService implements RelayerInterface {
     };
   }
 
-  async verifyWebhookSignature(
-    rawBody: Buffer,
-    signature: string,
-    keyId?: string,
-  ): Promise<boolean> {
-    return this.webhookVerifier.verify(rawBody, signature, keyId);
-  }
-
-  async relayDelegatedExecution(input: RelayInput): Promise<RelaySubmissionResult> {
-    this.ensureConfigured(true);
-
-    const permissionContext = this.validator.parsePermissionContextString(input.permissionContext);
-    if (permissionContext.length === 0) {
-      throw new AppError(
-        ErrorCode.INVALID_ONESHOT_BUNDLE,
-        'permissionContext is empty or unparseable (expected JSON-encoded Delegation[])',
-      );
-    }
-
-    const execution: OneShotExecution = {
-      target: input.call.to,
-      value: input.call.value ?? '0x0',
-      data: input.call.data,
-    };
-
-    const transaction: OneShotDelegatedTransaction = {
-      permissionContext,
-      executions: [execution],
-    };
-
-    const bundle: Bundle7710 = {
-      chainId: input.chainId,
-      transactions: [transaction],
-      context: input.context,
-      taskId: input.taskId ?? randomUUID(),
-      destinationUrl: this.resolveDestinationUrl(input),
-    };
-
-    this.validator.validateShape(bundle);
-    this.validator.validateContext(input.context, input.chainId, this.paymentTokenAddress);
-    await this.validator.validateAgainstCapabilities(
-      bundle,
-      { chainId: input.chainId, paymentTokenAddress: this.paymentTokenAddress },
-      (id) => this.getCapabilities(id),
-    );
-
-    let result: OneShotSendResult;
-    try {
-      result = await this.send7710Transaction(bundle);
-    } catch (err) {
-      throw err;
-    }
-
-    return {
-      taskId: result.taskId,
-      statusCode: 100,
-      status: 'pending',
-      targetAddress: this.relayerWallet,
-      paymentToken: this.paymentTokenAddress,
-      requiredPaymentAmount: '0',
-      context: input.context,
-      raw: result.raw,
-    };
-  }
-
-  async getRelayStatus(taskId: string): Promise<RelayerStatusResult> {
-    return this.getStatus(taskId);
-  }
-
   private buildSendParams(bundle: Bundle7710): Record<string, unknown> {
     const params: Record<string, unknown> = {
       chainId: String(bundle.chainId),
@@ -507,8 +403,6 @@ export class OneShotRelayerService implements RelayerInterface {
     if (bundle.authorizationList) params.authorizationList = bundle.authorizationList;
     if (bundle.taskId) params.taskId = bundle.taskId;
     else params.taskId = randomUUID();
-    if (bundle.destinationUrl) params.destinationUrl = bundle.destinationUrl;
-    else if (this.destinationUrl) params.destinationUrl = this.destinationUrl;
     if (bundle.memo) params.memo = bundle.memo;
     return params;
   }
@@ -523,7 +417,6 @@ export class OneShotRelayerService implements RelayerInterface {
         if (t.context) inner.context = t.context;
         if (t.authorizationList) inner.authorizationList = t.authorizationList;
         if (t.taskId) inner.taskId = t.taskId;
-        if (t.destinationUrl) inner.destinationUrl = t.destinationUrl;
         if (t.memo) inner.memo = t.memo;
         return inner;
       }),
@@ -531,7 +424,6 @@ export class OneShotRelayerService implements RelayerInterface {
     if (bundle.context) params.context = bundle.context;
     if (bundle.authorizationList) params.authorizationList = bundle.authorizationList;
     if (bundle.taskId) params.taskId = bundle.taskId;
-    if (bundle.destinationUrl) params.destinationUrl = bundle.destinationUrl;
     if (bundle.memo) params.memo = bundle.memo;
     return params;
   }

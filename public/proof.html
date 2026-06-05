@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SkillWallet Proof — Real ERC-7715 wallet_requestExecutionPermissions</title>
+    <title>SkillWallet Proof — FunctionCall Delegation on Base Sepolia</title>
     <link rel="stylesheet" href="/proof/style.css" />
     <script type="importmap">
       {
@@ -14,78 +14,81 @@
       }
     </script>
   </head>
+
   <body>
     <h1>SkillWallet Proof</h1>
     <p class="sub">
-      Real ERC-7715 <code>wallet_requestExecutionPermissions</code> flow on Sepolia (11155111).
-      Backend prepares <code>PermissionRequest[]</code> → wallet returns
-      <code>PermissionResponse[]</code> → backend stores raw + normalized. No mocks, no
-      manually-encoded delegations in the primary path.
+      Low-level <code>ScopeType.FunctionCall</code> delegation proof on Base Sepolia. This page does
+      <strong>not</strong> use ERC-7715 <code>wallet_requestExecutionPermissions</code>. Flow:
+      MetaMask Smart Account Hybrid → deploy → backend prepare → createDelegation → signDelegation →
+      grant → runtime run.
     </p>
 
     <section>
-      <h2>1 · Skills from backend</h2>
-      <div class="label">GET /skills</div>
-      <button id="load-skills" class="primary">Load Skills</button>
-      <div id="skills-list"></div>
-    </section>
-
-    <section>
-      <h2>2 · Connect MetaMask</h2>
-      <div class="label">window.ethereum</div>
+      <h2>1 · Connect MetaMask</h2>
+      <div class="label">Base Sepolia · chainId 84532</div>
       <button id="connect-mm" class="primary">Connect Wallet</button>
       <pre id="mm-info">not connected</pre>
     </section>
 
     <section>
-      <h2>3 · Smart account</h2>
-      <div class="label">toMetaMaskSmartAccount · Implementation.Hybrid</div>
+      <h2>2 · Create Smart Account</h2>
+      <div class="label">toMetaMaskSmartAccount · Implementation.Hybrid · fixed deploySalt</div>
       <button id="create-sa" class="primary">Create Smart Account</button>
-      <button id="deploy-sa">Deploy to Sepolia</button>
       <pre id="sa-info">not created</pre>
     </section>
 
     <section>
-      <h2>4 · Wallet supported permissions</h2>
-      <div class="label">wallet_getSupportedExecutionPermissions</div>
-      <button id="check-supported" class="primary">Query Wallet</button>
-      <pre id="supported-info">not queried</pre>
+      <h2>3 · Deploy Smart Account</h2>
+      <div class="label">Mandatory for Hybrid mode. Do not sign/run while counterfactual-only.</div>
+      <button id="deploy-sa" class="primary">Deploy Smart Account</button>
+      <button id="check-sa" class="secondary">Check Deployment + Balances</button>
+      <pre id="deploy-info">not deployed</pre>
     </section>
 
     <section>
-      <h2>5 · 1Shot capabilities + fee quote</h2>
-      <div class="label">POST /proof/relayer (proxy to 1Shot)</div>
-      <button id="load-1shot" class="primary">Get Capabilities + Fee</button>
-      <pre id="oneshot-info">not loaded</pre>
+      <h2>4 · Prepare Direct Router DCA</h2>
+      <div class="label">POST /installations/prepare</div>
+      <button id="prepare-dca" class="primary">Prepare DCA</button>
+      <pre id="prepare-info">not prepared</pre>
     </section>
 
     <section>
-      <h2>6 · Per-skill ERC-7715 flow</h2>
-      <div class="label">check-support → prepare → wallet_requestExecutionPermissions → grant</div>
-      <div id="per-skill"></div>
+      <h2>5 · Sign FunctionCall Delegation</h2>
+      <div class="label">
+        createDelegation · ScopeType.FunctionCall · smartAccount.signDelegation()
+      </div>
+      <button id="sign-delegation" class="primary">Sign Delegation</button>
+      <pre id="signature-info">not signed</pre>
     </section>
 
     <section>
-      <h2>7 · Fetch installed skills</h2>
-      <div class="label">GET /installations?userAddress=…&chainId=…</div>
-      <button id="fetch-installations" class="primary">Fetch Installations</button>
-      <pre id="installations-info">not fetched</pre>
+      <h2>6 · Grant Installation</h2>
+      <div class="label">POST /installations/grant</div>
+      <button id="grant-installation" class="primary">Grant</button>
+      <pre id="grant-info">not granted</pre>
     </section>
 
     <section>
-      <h2>8 · Revoke an installation</h2>
-      <div class="label">POST /permissions/revoke (after wallet_revokeExecutionPermission)</div>
-      <input id="revoke-installation-id" placeholder="installationId" style="width: 360px" />
-      <button id="revoke-btn" class="primary">Revoke</button>
-      <pre id="revoke-info">not revoked</pre>
+      <h2>7 · Run Installation</h2>
+      <div class="label">POST /runtime/run/:installationId</div>
+      <input id="admin-api-key" placeholder="ADMIN_API_KEY" style="width: 360px" />
+      <button id="run-installation" class="primary">Run Installation</button>
+      <pre id="run-info">not run</pre>
     </section>
 
     <section>
-      <h2>9 · Poll granted permission</h2>
-      <div class="label">GET /permissions/granted/:installationId</div>
-      <input id="granted-installation-id" placeholder="installationId" style="width: 360px" />
-      <button id="granted-btn" class="primary">Get Granted</button>
-      <pre id="granted-info">not fetched</pre>
+      <h2>8 · Poll Attempt</h2>
+      <div class="label">GET /runtime/attempts/:attemptId</div>
+      <button id="poll-attempt" class="primary">Poll Attempt</button>
+      <pre id="attempt-info">not polled</pre>
+    </section>
+
+    <section>
+      <h2>9 · Final Balance Check</h2>
+      <div class="label">USDC/WETH balance on smart account</div>
+      <button id="final-balances" class="primary">Check Final Balances</button>
+      <pre id="balance-info">not checked</pre>
     </section>
 
     <section>
@@ -94,485 +97,638 @@
     </section>
 
     <script type="module">
-      const logEl = document.getElementById('log');
-      const log = (...args) => {
+      const BACKEND = '';
+
+      const CHAIN_ID = 84532;
+      const BASE_SEPOLIA_RPC = 'https://sepolia.base.org';
+
+      const BASE_SEPOLIA_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+      const BASE_SEPOLIA_WETH = '0x4200000000000000000000000000000000000006';
+      const BASE_SEPOLIA_SWAP_ROUTER02 = '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4';
+
+      const AMOUNT_IN_USDC_ATOMS = '100000'; // 0.1 USDC
+      const MAX_SLIPPAGE_BPS = 50;
+      const FEE_TIER = 3000;
+
+      // Fixed salt for MVP proof. Deterministic address for the same owner + deployParams.
+      const FIXED_PROOF_DEPLOY_SALT =
+        '0x0000000000000000000000000000000000000000000000000000000000000888';
+
+      const $ = (id) => document.getElementById(id);
+
+      const state = {
+        viem: null,
+        smartAccountsKit: null,
+        walletClient: null,
+        publicClient: null,
+        eoa: null,
+        smartAccount: null,
+        prepare: null,
+        delegation: null,
+        signedDelegation: null,
+        grant: null,
+        installationId: null,
+        attemptId: null,
+      };
+
+      const logEl = $('log');
+      function log(...args) {
         const ts = new Date().toISOString().slice(11, 23);
-        const msg = args
-          .map((a) =>
-            typeof a === 'string'
-              ? a
-              : JSON.stringify(a, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2),
+        const text = args
+          .map((x) =>
+            typeof x === 'string'
+              ? x
+              : JSON.stringify(x, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2),
           )
           .join(' ');
-        logEl.textContent = `[${ts}] ${msg}\n` + logEl.textContent;
+        logEl.textContent = `[${ts}] ${text}\n` + logEl.textContent;
         console.log(`[${ts}]`, ...args);
-      };
-      const setPre = (id, data, isError = false) => {
-        const el = document.getElementById(id);
-        const text =
+      }
+
+      function setPre(id, data, isError = false) {
+        const el = $(id);
+        el.textContent =
           typeof data === 'string'
             ? data
             : JSON.stringify(data, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2);
-        el.textContent = text;
         el.style.borderLeft = isError ? '3px solid var(--err)' : '3px solid transparent';
-      };
+      }
 
-      const BACKEND = '';
-      const CHAIN_ID = 11155111;
-      const SEPOLIA_USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
-      const SEPOLIA_WETH = '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+      async function fetchJson(url, opts = {}) {
+        const res = await fetch(url, opts);
+        const text = await res.text();
 
-      const state = {
-        walletClient: null,
-        publicClient: null,
-        smartAccount: null,
-        env: null,
-        capabilities: null,
-        feeData: null,
-        supportedPermissions: null,
-        lastInstallationId: null,
-        lastGrantedContext: null,
-        lastDelegationManager: null,
-      };
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          throw new Error(`${url} → ${res.status}: ${text.slice(0, 500)}`);
+        }
+
+        if (!res.ok) {
+          throw new Error(`${url} → ${res.status}: ${JSON.stringify(json).slice(0, 800)}`);
+        }
+
+        return json?.payload ?? json;
+      }
 
       async function loadKit() {
-        return { viem: await import('viem') };
-      }
-
-      async function backendRpc(method, params) {
-        const res = await fetch(`${BACKEND}/proof/relayer`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method, params }),
-        });
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`backend proxy ${res.status}: ${text.slice(0, 300)}`);
+        if (state.viem && state.smartAccountsKit) {
+          return { viem: state.viem, smartAccountsKit: state.smartAccountsKit };
         }
-        const json = await res.json();
-        if (json.error) throw new Error(`relayer ${json.error.code}: ${json.error.message}`);
-        const payload = json.payload ?? json;
-        if (payload?.error)
-          throw new Error(`relayer ${payload.error.code}: ${payload.error.message}`);
-        return payload?.result;
+
+        const [viem, smartAccountsKit] = await Promise.all([
+          import('viem'),
+          import('https://esm.sh/@metamask/smart-accounts-kit@1.6.0'),
+        ]);
+
+        state.viem = viem;
+        state.smartAccountsKit = smartAccountsKit;
+        return { viem, smartAccountsKit };
       }
 
-      async function fetchJson(url, opts) {
-        const res = await fetch(url, opts);
-        if (!res.ok) throw new Error(`${url} → ${res.status}`);
-        const env = await res.json();
-        return env.payload ?? env;
-      }
-
-      function buildSkillConfig(skillId) {
-        if (skillId === 'dca-generic') {
-          return {
-            type: 'dca',
-            tokenIn: { symbol: 'USDC', address: SEPOLIA_USDC, decimals: 6 },
-            tokenOut: { symbol: 'WETH', address: SEPOLIA_WETH, decimals: 18 },
-            amountPerRun: '10',
-            frequency: 'weekly',
-            maxSlippageBps: 50,
-            router: {
-              name: 'uniswap',
-              address: state.smartAccount?.address ?? '0x0000000000000000000000000000000000000000',
+      function baseSepoliaChain(viem) {
+        return viem.defineChain({
+          id: CHAIN_ID,
+          name: 'Base Sepolia',
+          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+          rpcUrls: {
+            default: { http: [BASE_SEPOLIA_RPC] },
+          },
+          blockExplorers: {
+            default: {
+              name: 'Base Sepolia Explorer',
+              url: 'https://sepolia.basescan.org',
             },
-            recipient: state.smartAccount?.address ?? '0x0000000000000000000000000000000000000000',
-            quoteMode: 'router-quote',
-          };
-        }
-        if (skillId === 'aerodrome-vote-optimizer') {
-          return {
-            type: 'aerodrome-vote',
-            veAeroTokenId: '0',
-            strategy: 'balanced',
-            maxPools: 3,
-            allowAiExplanation: true,
-          };
-        }
-        return null;
+          },
+        });
       }
 
-      document.getElementById('load-skills').onclick = async () => {
-        try {
-          const data = await fetchJson(`${BACKEND}/skills`);
-          const container = document.getElementById('skills-list');
-          container.innerHTML = '';
-          for (const s of data) {
-            const div = document.createElement('div');
-            div.className = 'skill';
-            div.innerHTML = `<h3>${s.name} <code>${s.skillId}</code></h3>
-              <p>${s.description}</p>
-              <p class="label">adapter: ${s.adapter} · status: ${s.status} · chains: ${s.supportedChains.join(', ')}</p>
-              <p class="label">permissionRequirements:
-                <code>${JSON.stringify(s.permissionRequirements ?? [])}</code></p>`;
-            container.appendChild(div);
-          }
-          const perSkill = document.getElementById('per-skill');
-          perSkill.innerHTML = '';
-          for (const s of data) {
-            const div = document.createElement('div');
-            div.className = 'skill';
-            div.innerHTML = `<h4>${s.skillId}</h4>
-              <button id="check-support-${s.skillId}" data-skill="${s.skillId}">1 · check-support</button>
-              <button id="prepare-${s.skillId}" data-skill="${s.skillId}">2 · prepare</button>
-              <button id="sign-${s.skillId}" data-skill="${s.skillId}">3 · wallet_requestExecutionPermissions</button>
-              <button id="grant-${s.skillId}" data-skill="${s.skillId}">4 · grant</button>
-              <button id="relay-${s.skillId}" data-skill="${s.skillId}">5 · estimate + send (1Shot)</button>
-              <pre id="flow-${s.skillId}">awaiting input</pre>`;
-            perSkill.appendChild(div);
-            document.getElementById(`check-support-${s.skillId}`).onclick = () =>
-              runCheckSupport(s);
-            document.getElementById(`prepare-${s.skillId}`).onclick = () => runPrepare(s);
-            document.getElementById(`sign-${s.skillId}`).onclick = () => runSign(s);
-            document.getElementById(`grant-${s.skillId}`).onclick = () => runGrant(s);
-            document.getElementById(`relay-${s.skillId}`).onclick = () => runRelay(s);
-          }
-          log('loaded', data.length, 'skills');
-        } catch (e) {
-          log('ERR load skills', e.message);
-        }
-      };
+      async function switchToBaseSepolia() {
+        const chainIdHex = `0x${CHAIN_ID.toString(16)}`;
 
-      document.getElementById('connect-mm').onclick = async () => {
         try {
-          if (typeof window.ethereum === 'undefined') {
-            throw new Error('MetaMask extension not detected.');
-          }
-          const { viem } = await loadKit();
-          const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
           await window.ethereum.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x' + CHAIN_ID.toString(16) }],
+            params: [{ chainId: chainIdHex }],
           });
-          state.walletClient = viem.createWalletClient({
-            account: accounts[0],
-            chain: viem.defineChain({
-              id: CHAIN_ID,
-              name: 'Sepolia',
-              nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-              rpcUrls: {
-                default: { http: ['https://eth-sepolia.g.alchemy.com/v2/6-ELpC9NU0QhsOHwyFid4'] },
-              },
-            }),
-            transport: viem.custom(window.ethereum),
-          });
-          state.publicClient = viem.createPublicClient({
-            chain: state.walletClient.chain,
-            transport: viem.http('https://eth-sepolia.g.alchemy.com/v2/6-ELpC9NU0QhsOHwyFid4'),
-          });
-          setPre('mm-info', { address: state.walletClient.account.address, chainId: CHAIN_ID });
-          log('connected to MetaMask', state.walletClient.account.address);
-        } catch (e) {
-          log('ERR connect', e.message);
-          setPre('mm-info', { error: e.message }, true);
-        }
-      };
+        } catch (err) {
+          if (err?.code !== 4902) throw err;
 
-      document.getElementById('create-sa').onclick = async () => {
-        try {
-          if (!state.walletClient) throw new Error('connect MetaMask first');
-          const { viem } = await loadKit();
-          const smartAccountModule =
-            await import('https://esm.sh/@metamask/smart-accounts-kit@1.6.0');
-          state.smartAccount = await smartAccountModule.toMetaMaskSmartAccount({
-            client: state.publicClient,
-            implementation: smartAccountModule.Implementation.Hybrid,
-            deployParams: [state.walletClient.account.address, [], [], []],
-            deploySalt: '0x',
-            signer: { walletClient: state.walletClient },
-          });
-          state.env = state.smartAccount.environment;
-          setPre('sa-info', {
-            eoa: state.walletClient.account.address,
-            smartAccount: state.smartAccount.address,
-            environmentDelegationManager: state.env.DelegationManager,
-            environmentEntryPoint: state.env.EntryPoint,
-          });
-          log('created smart account (counterfactual)', state.smartAccount.address);
-        } catch (e) {
-          log('ERR create SA', e.message);
-          setPre('sa-info', { error: e.message }, true);
-        }
-      };
-
-      document.getElementById('deploy-sa').onclick = async () => {
-        try {
-          if (!state.smartAccount) throw new Error('create smart account first');
-          const factoryArgs = await state.smartAccount.getFactoryArgs();
-          if (!factoryArgs?.factory || !factoryArgs?.factoryData) {
-            throw new Error('smart account does not expose factory args (already deployed?)');
-          }
-          const deployHash = await state.walletClient.sendTransaction({
-            to: factoryArgs.factory,
-            data: factoryArgs.factoryData,
-          });
-          const receipt = await state.publicClient.waitForTransactionReceipt({ hash: deployHash });
-          log('smart account deployed on-chain', receipt.blockNumber.toString());
-        } catch (e) {
-          log('ERR deploy SA', e.message);
-        }
-      };
-
-      document.getElementById('check-supported').onclick = async () => {
-        try {
-          if (typeof window.ethereum === 'undefined') {
-            throw new Error('MetaMask extension not detected');
-          }
-          const supported = await window.ethereum.request({
-            method: 'wallet_getSupportedExecutionPermissions',
-            params: [],
-          });
-          console.log('🚀 ~ supported:', supported);
-          state.supportedPermissions = supported;
-          setPre('supported-info', { supported: state.supportedPermissions });
-          log('wallet supports', state.supportedPermissions.length, 'permission types');
-        } catch (e) {
-          log('ERR check supported', e.message);
-          setPre('supported-info', { error: e.message }, true);
-        }
-      };
-
-      document.getElementById('load-1shot').onclick = async () => {
-        try {
-          state.capabilities = await backendRpc('relayer_getCapabilities', [String(CHAIN_ID)]);
-          state.feeData = await backendRpc('relayer_getFeeData', {
-            chainId: String(CHAIN_ID),
-            token: SEPOLIA_USDC,
-          });
-          setPre('oneshot-info', { capabilities: state.capabilities, feeData: state.feeData });
-          log('1Shot ready');
-        } catch (e) {
-          log('ERR 1Shot', e.message);
-          setPre('oneshot-info', { error: e.message }, true);
-        }
-      };
-
-      async function runCheckSupport(skill) {
-        const out = document.getElementById(`flow-${skill.skillId}`);
-        try {
-          if (!state.walletClient || !state.smartAccount) {
-            throw new Error('connect MetaMask and create SA first');
-          }
-          if (!state.supportedPermissions) {
-            throw new Error('query wallet supported permissions (step 4) first');
-          }
-          const res = await fetchJson(`${BACKEND}/permissions/check-support`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userAddress: state.walletClient.account.address,
-              smartAccountAddress: state.smartAccount.address,
-              chainId: CHAIN_ID,
-              skillId: skill.skillId,
-              walletReportedPermissions: state.supportedPermissions,
-            }),
-          });
-          setPre(`flow-${skill.skillId}`, { step: 'check-support', ...res });
-          log(`check-support ${skill.skillId}: allSupported=${res.allSupported}`);
-        } catch (e) {
-          log(`ERR check-support ${skill.skillId}`, e.message);
-          setPre(`flow-${skill.skillId}`, { error: e.message }, true);
-        }
-      }
-
-      async function runPrepare(skill) {
-        const out = document.getElementById(`flow-${skill.skillId}`);
-        try {
-          if (!state.walletClient || !state.smartAccount) {
-            throw new Error('connect MetaMask and create SA first');
-          }
-          const config = buildSkillConfig(skill.skillId);
-          if (!config) throw new Error(`no config builder for ${skill.skillId}`);
-          const res = await fetchJson(`${BACKEND}/permissions/prepare`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userAddress: state.walletClient.account.address,
-              smartAccountAddress: state.smartAccount.address,
-              chainId: CHAIN_ID,
-              skillId: skill.skillId,
-              config,
-              pricingPlan: {
-                id: 'mvp-free',
-                label: 'MVP Free',
-                durationDays: 30,
-                skillFeeUsdc: '0',
-              },
-              schedule: { frequency: 'weekly' },
-            }),
-          });
-          state.lastInstallationId = res.installation?.installationId;
-          setPre(`flow-${skill.skillId}`, { step: 'prepare', ...res });
-          log(`prepared ${skill.skillId}: installationId=${state.lastInstallationId}`);
-        } catch (e) {
-          log(`ERR prepare ${skill.skillId}`, e.message);
-          setPre(`flow-${skill.skillId}`, { error: e.message }, true);
-        }
-      }
-
-      async function runSign(skill) {
-        const out = document.getElementById(`flow-${skill.skillId}`);
-        try {
-          if (typeof window.ethereum === 'undefined') {
-            throw new Error('MetaMask extension not detected');
-          }
-          const cached = out.textContent && JSON.parse(out.textContent);
-          if (!cached || !cached.installation || !cached.permissionRequests) {
-            throw new Error('run prepare first');
-          }
-          const installationId = cached.installation.installationId;
-          const permissionRequests = cached.permissionRequests;
-          log(`calling wallet_requestExecutionPermissions for installation ${installationId}...`);
-          const response = await window.ethereum.request({
-            method: 'wallet_requestExecutionPermissions',
-            params: permissionRequests,
-          });
-          if (!Array.isArray(response) || response.length === 0) {
-            throw new Error('wallet returned empty PermissionResponse[]');
-          }
-          const first = response[0];
-          state.lastInstallationId = installationId;
-          state.lastGrantedContext = first.context;
-          state.lastDelegationManager = first.delegationManager;
-          setPre(`flow-${skill.skillId}`, {
-            ...cached,
-            step: 'signed',
-            permissionResponse: response,
-          });
-          log(`signed ${skill.skillId}: ${response.length} response(s)`);
-        } catch (e) {
-          log(`ERR sign ${skill.skillId}`, e.message);
-          setPre(`flow-${skill.skillId}`, { error: e.message }, true);
-        }
-      }
-
-      async function runGrant(skill) {
-        const out = document.getElementById(`flow-${skill.skillId}`);
-        try {
-          const cached = out.textContent && JSON.parse(out.textContent);
-          if (!cached || !cached.permissionResponse || !cached.installation) {
-            throw new Error('run sign first');
-          }
-          const installationId = cached.installation.installationId;
-          const res = await fetchJson(`${BACKEND}/permissions/grant`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              installationId,
-              permissionResponses: cached.permissionResponse,
-            }),
-          });
-          setPre(`flow-${skill.skillId}`, { ...cached, step: 'granted', ...res });
-          log(`granted ${skill.skillId}: activation=${res.activation}`);
-        } catch (e) {
-          log(`ERR grant ${skill.skillId}`, e.message);
-          setPre(`flow-${skill.skillId}`, { error: e.message }, true);
-        }
-      }
-
-      async function runRelay(skill) {
-        const out = document.getElementById(`flow-${skill.skillId}`);
-        try {
-          if (!state.lastGrantedContext || !state.lastDelegationManager) {
-            throw new Error('run grant first to populate granted context + delegationManager');
-          }
-          const chainInfo = state.capabilities?.chains?.find((c) => c.chainId === String(CHAIN_ID));
-          const targetAddress = chainInfo?.targetAddress ?? state.feeData?.targetAddress;
-          if (!targetAddress) throw new Error('1Shot did not return targetAddress');
-          const permissionContextBytes = state.lastGrantedContext.startsWith('0x')
-            ? state.lastGrantedContext.slice(2)
-            : state.lastGrantedContext;
-          const selfCallData = '0x';
-          const bundle = {
-            chainId: String(CHAIN_ID),
-            delegationManager: state.lastDelegationManager,
-            transactions: [
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [
               {
-                permissionContext: '0x' + permissionContextBytes,
-                executions: [
-                  { target: state.smartAccount.address, value: '0x0', data: selfCallData },
-                ],
+                chainId: chainIdHex,
+                chainName: 'Base Sepolia',
+                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+                rpcUrls: [BASE_SEPOLIA_RPC],
+                blockExplorerUrls: ['https://sepolia.basescan.org'],
               },
             ],
-          };
-          const fee = await backendRpc('relayer_getFeeData', {
-            chainId: String(CHAIN_ID),
-            token: SEPOLIA_USDC,
           });
-          const ctx = fee?.context;
-          if (!ctx) throw new Error('1Shot did not return fee context');
-          const send = await backendRpc('relayer_send7710Transaction', {
-            ...bundle,
-            context: ctx,
-            taskId: crypto.randomUUID(),
-            destinationUrl: `${BACKEND}/runtime/oneshot/webhook`,
-          });
-          setPre(`flow-${skill.skillId}`, { step: 'relay', bundle, send });
-          log(`relayed ${skill.skillId}: taskId=${send?.taskId ?? send?.id ?? '?'}`);
-        } catch (e) {
-          log(`ERR relay ${skill.skillId}`, e.message);
-          setPre(`flow-${skill.skillId}`, { error: e.message }, true);
         }
       }
 
-      document.getElementById('fetch-installations').onclick = async () => {
+      function toHexBytes(bytes) {
+        return '0x' + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      function toRelayerJson(value) {
+        if (value === null || value === undefined) return value;
+
+        if (typeof value === 'bigint') {
+          return `0x${value.toString(16)}`;
+        }
+
+        if (value instanceof Uint8Array) {
+          return toHexBytes(value);
+        }
+
+        if (Array.isArray(value)) {
+          return value.map(toRelayerJson);
+        }
+
+        if (typeof value === 'object') {
+          const out = {};
+          for (const [k, v] of Object.entries(value)) {
+            out[k] = toRelayerJson(v);
+          }
+          return out;
+        }
+
+        return value;
+      }
+
+      async function getCode(address) {
+        return state.publicClient.getBytecode({ address });
+      }
+
+      async function isContractDeployed(address) {
+        const code = await getCode(address);
+        return !!code && code !== '0x';
+      }
+
+      async function readTokenBalance(token, owner) {
+        const { erc20Abi } = await import('viem');
+        return state.publicClient.readContract({
+          address: token,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [owner],
+        });
+      }
+
+      async function getBalances() {
+        if (!state.smartAccount) throw new Error('create smart account first');
+        const usdc = await readTokenBalance(BASE_SEPOLIA_USDC, state.smartAccount.address);
+        const weth = await readTokenBalance(BASE_SEPOLIA_WETH, state.smartAccount.address);
+        return {
+          smartAccount: state.smartAccount.address,
+          usdcAtoms: usdc.toString(),
+          usdcHuman: state.viem.formatUnits(usdc, 6),
+          wethAtoms: weth.toString(),
+          wethHuman: state.viem.formatUnits(weth, 18),
+        };
+      }
+
+      function assertReadyForPrepare() {
+        if (!state.walletClient || !state.eoa) {
+          throw new Error('connect MetaMask first');
+        }
+        if (!state.smartAccount) {
+          throw new Error('create smart account first');
+        }
+      }
+
+      function buildDcaConfig() {
+        assertReadyForPrepare();
+
+        return {
+          type: 'direct-router-dca',
+          tokenIn: { address: BASE_SEPOLIA_USDC },
+          tokenOut: { address: BASE_SEPOLIA_WETH },
+          amountPerRun: AMOUNT_IN_USDC_ATOMS,
+          frequency: 'daily',
+          maxSlippageBps: MAX_SLIPPAGE_BPS,
+          router: {
+            name: 'uniswap-v3',
+            address: BASE_SEPOLIA_SWAP_ROUTER02,
+          },
+          feeTier: FEE_TIER,
+          recipient: state.smartAccount.address,
+          quoteMode: 'router-quote',
+        };
+      }
+
+      function buildFunctionCallScope(prepare) {
+        if (!prepare?.delegationScope) {
+          throw new Error('prepare response missing delegationScope');
+        }
+
+        const scope = prepare.delegationScope;
+
+        if (!Array.isArray(scope.targets) || scope.targets.length === 0) {
+          throw new Error('delegationScope.targets missing or empty');
+        }
+
+        if (!Array.isArray(scope.selectors) || scope.selectors.length === 0) {
+          throw new Error('delegationScope.selectors missing or empty');
+        }
+
+        const out = {
+          type: state.smartAccountsKit.ScopeType.FunctionCall,
+          targets: scope.targets,
+          selectors: scope.selectors,
+          valueLte: { maxValue: 0n },
+        };
+
+        if (scope.allowedCalldata) out.allowedCalldata = scope.allowedCalldata;
+        if (scope.exactCalldata) out.exactCalldata = scope.exactCalldata;
+
+        return out;
+      }
+
+      $('connect-mm').onclick = async () => {
         try {
-          if (!state.walletClient) throw new Error('connect MetaMask first');
-          const params = new URLSearchParams({
-            userAddress: state.walletClient.account.address,
-            chainId: String(CHAIN_ID),
+          if (!window.ethereum) {
+            throw new Error('MetaMask extension not detected');
+          }
+
+          const { viem } = await loadKit();
+          await switchToBaseSepolia();
+
+          const accounts = await window.ethereum.request({
+            method: 'eth_requestAccounts',
           });
-          const listData = await fetchJson(`${BACKEND}/installations?${params}`);
-          const list = Array.isArray(listData) ? listData : (listData?.items ?? []);
-          setPre('installations-info', { count: list.length, items: list });
-          log(`fetched ${list.length} installations`);
-        } catch (e) {
-          log('ERR fetch installations', e.message);
-          setPre('installations-info', { error: e.message }, true);
+
+          if (!accounts?.[0]) {
+            throw new Error('MetaMask returned no account');
+          }
+
+          const chain = baseSepoliaChain(viem);
+
+          state.walletClient = viem.createWalletClient({
+            account: accounts[0],
+            chain,
+            transport: viem.custom(window.ethereum),
+          });
+
+          state.publicClient = viem.createPublicClient({
+            chain,
+            transport: viem.http(BASE_SEPOLIA_RPC),
+          });
+
+          state.eoa = accounts[0];
+
+          setPre('mm-info', {
+            eoa: state.eoa,
+            chainId: CHAIN_ID,
+            chain: 'Base Sepolia',
+          });
+
+          log('connected', state.eoa);
+        } catch (err) {
+          setPre('mm-info', { error: err.message }, true);
+          log('ERR connect', err.message);
         }
       };
 
-      document.getElementById('revoke-btn').onclick = async () => {
+      $('create-sa').onclick = async () => {
         try {
-          const installationId =
-            document.getElementById('revoke-installation-id').value.trim() ||
-            state.lastInstallationId;
-          if (!installationId) throw new Error('provide installationId');
-          if (typeof window.ethereum !== 'undefined') {
-            try {
-              await window.ethereum.request({
-                method: 'wallet_revokeExecutionPermission',
-                params: [{ context: state.lastGrantedContext ?? '0x' }],
-              });
-            } catch (e) {
-              log('wallet_revokeExecutionPermission not supported by this wallet:', e.message);
-            }
+          if (!state.walletClient || !state.eoa) {
+            throw new Error('connect MetaMask first');
           }
-          const res = await fetchJson(`${BACKEND}/permissions/revoke`, {
+
+          const { smartAccountsKit } = await loadKit();
+
+          state.smartAccount = await smartAccountsKit.toMetaMaskSmartAccount({
+            client: state.publicClient,
+            implementation: smartAccountsKit.Implementation.Hybrid,
+            deployParams: [state.eoa, [], [], []],
+            deploySalt: FIXED_PROOF_DEPLOY_SALT,
+            signer: { walletClient: state.walletClient },
+          });
+
+          const deployed = await isContractDeployed(state.smartAccount.address);
+
+          setPre('sa-info', {
+            eoa: state.eoa,
+            smartAccount: state.smartAccount.address,
+            implementation: 'Hybrid',
+            deploySalt: FIXED_PROOF_DEPLOY_SALT,
+            deployed,
+            environment: {
+              DelegationManager: state.smartAccount.environment?.DelegationManager,
+              EntryPoint: state.smartAccount.environment?.EntryPoint,
+            },
+            fundingInstruction: {
+              message: 'Fund this smartAccount address with Base Sepolia USDC before running.',
+              address: state.smartAccount.address,
+              amountPerRunUsdcAtoms: AMOUNT_IN_USDC_ATOMS,
+              recommendedMinimum: 'amountPerRun + 1Shot fee',
+            },
+          });
+
+          log('created smart account', state.smartAccount.address);
+        } catch (err) {
+          setPre('sa-info', { error: err.message }, true);
+          log('ERR create SA', err.message);
+        }
+      };
+
+      $('deploy-sa').onclick = async () => {
+        try {
+          if (!state.smartAccount) {
+            throw new Error('create smart account first');
+          }
+
+          const alreadyDeployed = await isContractDeployed(state.smartAccount.address);
+          if (alreadyDeployed) {
+            setPre('deploy-info', {
+              status: 'already_deployed',
+              smartAccount: state.smartAccount.address,
+            });
+            log('smart account already deployed');
+            return;
+          }
+
+          const factoryArgs = await state.smartAccount.getFactoryArgs();
+          if (!factoryArgs?.factory || !factoryArgs?.factoryData) {
+            throw new Error('smart account did not expose factory args');
+          }
+
+          const hash = await state.walletClient.sendTransaction({
+            account: state.eoa,
+            to: factoryArgs.factory,
+            data: factoryArgs.factoryData,
+            value: 0n,
+          });
+
+          log('deploy tx sent', hash);
+
+          const receipt = await state.publicClient.waitForTransactionReceipt({
+            hash,
+          });
+
+          const deployed = await isContractDeployed(state.smartAccount.address);
+          const balances = await getBalances();
+
+          setPre('deploy-info', {
+            status: deployed ? 'deployed' : 'not_deployed_after_tx',
+            txHash: receipt.transactionHash,
+            blockNumber: receipt.blockNumber?.toString(),
+            smartAccount: state.smartAccount.address,
+            balances,
+          });
+
+          log('deploy receipt', receipt.transactionHash);
+        } catch (err) {
+          setPre('deploy-info', { error: err.message }, true);
+          log('ERR deploy SA', err.message);
+        }
+      };
+
+      $('check-sa').onclick = async () => {
+        try {
+          if (!state.smartAccount) {
+            throw new Error('create smart account first');
+          }
+
+          const deployed = await isContractDeployed(state.smartAccount.address);
+          const balances = await getBalances();
+
+          setPre('deploy-info', {
+            smartAccount: state.smartAccount.address,
+            deployed,
+            balances,
+            note: deployed
+              ? 'Ready for prepare/sign/grant/run.'
+              : 'Hybrid smart account is still counterfactual. Deploy before running.',
+          });
+        } catch (err) {
+          setPre('deploy-info', { error: err.message }, true);
+          log('ERR check SA', err.message);
+        }
+      };
+
+      $('prepare-dca').onclick = async () => {
+        try {
+          assertReadyForPrepare();
+
+          const deployed = await isContractDeployed(state.smartAccount.address);
+          if (!deployed) {
+            throw new Error('smart account is not deployed. Deploy it first in step 3.');
+          }
+
+          const config = buildDcaConfig();
+
+          const res = await fetchJson(`${BACKEND}/installations/prepare`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ installationId, reason: 'user-requested' }),
+            body: JSON.stringify({
+              userAddress: state.eoa,
+              smartAccountAddress: state.smartAccount.address,
+              chainId: CHAIN_ID,
+              skillId: 'direct-router-dca',
+              config,
+            }),
           });
-          setPre('revoke-info', res);
-          log(`revoked ${installationId}`);
-        } catch (e) {
-          log('ERR revoke', e.message);
-          setPre('revoke-info', { error: e.message }, true);
+
+          state.prepare = res;
+
+          setPre('prepare-info', {
+            prepareId: res.prepareId,
+            installationId: res.installationId,
+            chainId: res.chainId,
+            smartAccountAddress: res.smartAccountAddress,
+            delegate: res.delegate,
+            feeCollector: res.feeCollector,
+            paymentToken: res.paymentToken,
+            requiredPaymentAmount: res.requiredPaymentAmount,
+            delegationScope: res.delegationScope,
+            previewCalls: res.previewCalls ?? res.calls,
+            prepareSnapshot: res.prepareSnapshot,
+            expiresAt: res.expiresAt,
+          });
+
+          log('prepared DCA', res.prepareId ?? res.installationId ?? '(no id)');
+        } catch (err) {
+          setPre('prepare-info', { error: err.message }, true);
+          log('ERR prepare', err.message);
         }
       };
 
-      document.getElementById('granted-btn').onclick = async () => {
+      $('sign-delegation').onclick = async () => {
         try {
-          const installationId =
-            document.getElementById('granted-installation-id').value.trim() ||
-            state.lastInstallationId;
-          if (!installationId) throw new Error('provide installationId');
-          const res = await fetchJson(`${BACKEND}/permissions/granted/${installationId}`);
-          setPre('granted-info', res);
-        } catch (e) {
-          log('ERR granted', e.message);
-          setPre('granted-info', { error: e.message }, true);
+          if (!state.smartAccount) {
+            throw new Error('create smart account first');
+          }
+          if (!state.prepare) {
+            throw new Error('prepare first');
+          }
+          if (!state.prepare.delegate) {
+            throw new Error('prepare response missing delegate / 1Shot targetAddress');
+          }
+
+          await loadKit();
+
+          const delegation = state.smartAccountsKit.createDelegation({
+            environment: state.smartAccount.environment,
+            from: state.smartAccount.address,
+            to: state.prepare.delegate,
+            scope: buildFunctionCallScope(state.prepare),
+          });
+
+          const signature = await state.smartAccount.signDelegation({
+            delegation,
+          });
+
+          state.delegation = delegation;
+          state.signedDelegation = toRelayerJson({
+            ...delegation,
+            signature,
+          });
+
+          setPre('signature-info', {
+            signedDelegation: state.signedDelegation,
+            rawDelegation: toRelayerJson(delegation),
+          });
+
+          log('signed delegation');
+        } catch (err) {
+          setPre('signature-info', { error: err.message }, true);
+          log('ERR sign delegation', err.message);
+        }
+      };
+
+      $('grant-installation').onclick = async () => {
+        try {
+          if (!state.prepare) {
+            throw new Error('prepare first');
+          }
+          if (!state.signedDelegation) {
+            throw new Error('sign delegation first');
+          }
+
+          const payload = {
+            prepareId: state.prepare.prepareId,
+            installationId: state.prepare.installationId,
+            userAddress: state.eoa,
+            smartAccountAddress: state.smartAccount.address,
+            chainId: CHAIN_ID,
+            skillId: 'direct-router-dca',
+            permissionPath: 'low-level-function-call-delegation',
+            permissionContext: [state.signedDelegation],
+            signedDelegation: state.signedDelegation,
+            prepareSnapshot: state.prepare.prepareSnapshot,
+            raw: {
+              source: 'public/proof.html',
+              sdk: '@metamask/smart-accounts-kit@1.6.0',
+              implementation: 'Hybrid',
+              deploySalt: FIXED_PROOF_DEPLOY_SALT,
+              flow: 'direct-router-dca-function-call',
+            },
+          };
+
+          const res = await fetchJson(`${BACKEND}/installations/grant`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          state.grant = res;
+          state.installationId =
+            res.installation?.installationId ?? res.installationId ?? state.prepare.installationId;
+
+          setPre('grant-info', {
+            installationId: state.installationId,
+            response: res,
+          });
+
+          log('granted installation', state.installationId);
+        } catch (err) {
+          setPre('grant-info', { error: err.message }, true);
+          log('ERR grant', err.message);
+        }
+      };
+
+      $('run-installation').onclick = async () => {
+        try {
+          if (!state.installationId) {
+            throw new Error('grant installation first');
+          }
+
+          const adminApiKey = $('admin-api-key').value.trim();
+          if (!adminApiKey) {
+            throw new Error('ADMIN_API_KEY is required');
+          }
+
+          const res = await fetchJson(`${BACKEND}/runtime/run/${state.installationId}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': adminApiKey,
+            },
+            body: JSON.stringify({ force: true }),
+          });
+
+          state.attemptId = res.attemptId ?? res.attempt?.attemptId;
+
+          setPre('run-info', {
+            installationId: state.installationId,
+            attemptId: state.attemptId,
+            response: res,
+          });
+
+          log('runtime run submitted', state.attemptId);
+        } catch (err) {
+          setPre('run-info', { error: err.message }, true);
+          log('ERR run', err.message);
+        }
+      };
+
+      $('poll-attempt').onclick = async () => {
+        try {
+          if (!state.attemptId) {
+            throw new Error('run installation first');
+          }
+
+          const terminal = new Set(['confirmed', 'failed', 'reverted', 'rejected', 'skipped']);
+          let last = null;
+
+          for (let i = 0; i < 40; i += 1) {
+            last = await fetchJson(`${BACKEND}/runtime/attempts/${state.attemptId}`);
+            setPre('attempt-info', last);
+
+            const status = last.status ?? last.attempt?.status;
+            log('attempt status', status ?? 'unknown');
+
+            if (status && terminal.has(status)) {
+              return;
+            }
+
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+
+          setPre('attempt-info', {
+            warning: 'poll timeout',
+            last,
+          });
+        } catch (err) {
+          setPre('attempt-info', { error: err.message }, true);
+          log('ERR poll attempt', err.message);
+        }
+      };
+
+      $('final-balances').onclick = async () => {
+        try {
+          const balances = await getBalances();
+          setPre('balance-info', balances);
+          log('balances checked', balances);
+        } catch (err) {
+          setPre('balance-info', { error: err.message }, true);
+          log('ERR balances', err.message);
         }
       };
     </script>

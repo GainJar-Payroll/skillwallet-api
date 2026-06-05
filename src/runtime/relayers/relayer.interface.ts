@@ -1,44 +1,44 @@
-// 1Shot Relayer v2 — types. Wire shape from
-// https://1shotapi.com/openrpc/openrpc.json (1.0.0). Public Relayer is
-// permissionless; account-level auth (x-api-key + x-api-secret) is optional.
+import type {
+  Address as StrictAddress,
+  HexString as StrictHexString,
+} from '../../common/types/evm';
+
+type Address = StrictAddress | string;
+type HexString = StrictHexString | string;
 
 export type OneShotStatusCode = 100 | 110 | 200 | 400 | 500;
-/** 100 Pending · 110 Submitted · 200 Confirmed · 400 Rejected · 500 Reverted */
-
 export type OneShotStatusName = 'pending' | 'submitted' | 'confirmed' | 'rejected' | 'reverted';
-
 export type OneShotErrorCode = 4001 | 4200 | 4202 | 4204 | 4210 | 4211;
-/** 4001 UserRejectedRequest · 4200 InsufficientPayment · 4202 UnsupportedPaymentToken
- * · 4204 QuoteExpired · 4210 InvalidAuthorizationList · 4211 SimulationFailed */
 
 export interface OneShotAuthorizationListEntry {
-  address: string;
+  address: Address;
   chainId: number | string;
   nonce: number | string;
-  r: string;
-  s: string;
+  r: HexString;
+  s: HexString;
   yParity: number | string;
 }
 
 export interface OneShotCaveat {
-  enforcer: string;
-  terms: string;
-  args: string;
+  enforcer: Address;
+  terms: HexString;
+  args: HexString;
 }
 
 export interface OneShotDelegation {
-  delegate: string;
-  delegator: string;
-  authority: string;
+  delegate: Address;
+  delegator: Address;
+  authority: HexString;
   caveats: OneShotCaveat[];
-  salt: string;
-  signature: string;
+  salt: HexString;
+  signature: HexString;
 }
 
 export interface OneShotExecution {
-  target: string;
+  target: Address;
   value: string;
-  data: string;
+  callData?: HexString;
+  data?: HexString;
 }
 
 export interface OneShotDelegatedTransaction {
@@ -50,12 +50,9 @@ export interface Bundle7710 {
   chainId: number;
   transactions: OneShotDelegatedTransaction[];
   authorizationList?: OneShotAuthorizationListEntry[];
-  context?: string;
+  context?: string | Record<string, unknown>;
   taskId?: string;
-  destinationUrl?: string;
   memo?: string;
-  /** Capabilities + fee quote + estimate captured at quote-time, used to
-   *  post-validate that targetAddress / paymentToken haven't drifted. */
   raw?: {
     capabilities?: OneShotCapabilities;
     feeQuote?: OneShotFeeData;
@@ -63,75 +60,113 @@ export interface Bundle7710 {
   };
 }
 
-/** One per-chain block in a multichain bundle. Wire shape per OpenRPC
- *  `relayer_send7710TransactionMultichain` is an array of these (no
- *  top-level chainId, each entry carries its own). */
-export type MultichainBundle7710Entry = {
+export interface MultichainBundle7710Entry {
   chainId: number;
   transactions: OneShotDelegatedTransaction[];
   authorizationList?: OneShotAuthorizationListEntry[];
   context?: string;
   taskId?: string;
-  destinationUrl?: string;
   memo?: string;
-};
+}
 
-export type MultichainBundle7710 = {
+export interface MultichainBundle7710 {
   transactions: MultichainBundle7710Entry[];
   authorizationList?: OneShotAuthorizationListEntry[];
   context?: string;
   taskId?: string;
-  destinationUrl?: string;
   memo?: string;
-};
+}
 
 export interface OneShotTokenInfo {
-  address: string;
+  address: Address;
   decimals: number | string;
   symbol?: string;
   name?: string;
 }
 
 export interface OneShotChainCapability {
-  chainId: string;
-  feeCollector: string;
-  targetAddress: string;
+  chainId: number | string;
+  feeCollector?: Address;
+  targetAddress?: Address;
   tokens: OneShotTokenInfo[];
+  name?: string;
+  contracts?: {
+    delegationManager?: Address;
+    erc20SessionKeyRevoker?: Address;
+  };
+  features?: {
+    send7710Transaction?: boolean;
+    estimate7710Transaction?: boolean;
+  };
+  status?: string;
 }
 
 export interface OneShotCapabilities {
   chains: OneShotChainCapability[];
+  data?: {
+    chains?: OneShotChainCapability[];
+    paymentTokens?: Array<{
+      chainId: number;
+      address: Address;
+      symbol: string;
+      decimals: number;
+    }>;
+  };
+  meta?: {
+    version?: string;
+    environment?: string;
+    capabilities?: string[];
+  };
   raw?: Record<string, unknown>;
 }
 
 export interface OneShotFeeData {
-  chainId: string;
-  token: OneShotTokenInfo;
-  rate: number;
-  minFee: string;
-  expiry: number;
-  gasPrice: string;
-  feeCollector: string;
-  targetAddress: string;
-  context: string;
+  chainId: number | string;
+  paymentToken?: Address | OneShotTokenInfo;
+  token?: OneShotTokenInfo;
+  requiredPaymentAmount?: string;
+  minFee?: string;
+  rate?: number;
+  gasPrice?: string;
+  feeCollector: Address;
+  targetAddress: Address;
+  expiry?: number;
+  context?: string;
+  meta?: Record<string, unknown>;
   raw?: Record<string, unknown>;
 }
 
 export interface OneShotEstimateResult {
-  success: boolean;
+  success?: boolean;
+  chainId?: number;
+  paymentToken?: Address;
+  feeCollector?: Address;
+  estimatedGas?: string;
   paymentTokenAddress?: string;
   paymentChain?: number;
-  gasUsed: Record<string, string>;
+  gasUsed?: Record<string, string>;
   requiredPaymentAmount: string;
-  context: string;
+  context?: string;
   contextByChainId?: Record<string, string>;
   error?: string;
+  meta?: Record<string, unknown>;
   raw?: Record<string, unknown>;
 }
 
 export interface OneShotSendResult {
   taskId: string;
-  raw?: string;
+  status?: OneShotStatusName;
+  statusCode?: OneShotStatusCode;
+  txHash?: HexString;
+  receipt?: {
+    blockNumber?: string;
+    blockHash?: HexString;
+    gasUsed?: string;
+    status?: string;
+  };
+  errorCode?: string;
+  errorMessage?: string;
+  raw?: unknown;
 }
 
 export interface OneShotBaseStatus {
@@ -147,20 +182,20 @@ export interface OneShotPendingStatus extends OneShotBaseStatus {
 
 export interface OneShotSubmittedStatus extends OneShotBaseStatus {
   status: 110;
-  hash: string;
+  hash: HexString;
 }
 
 export interface OneShotStatusLog {
-  address: string;
+  address: Address;
   topics: string[];
   data: string;
 }
 
 export interface OneShotStatusReceipt {
-  blockHash: string;
+  blockHash: HexString;
   blockNumber: string;
   gasUsed: string;
-  transactionHash: string;
+  transactionHash: HexString;
   logs?: OneShotStatusLog[];
 }
 
@@ -190,95 +225,15 @@ export type OneShotStatusResult =
 
 export interface RelayerStatusResult {
   taskId: string;
-  statusCode: OneShotStatusCode;
   status: OneShotStatusName;
+  statusCode: OneShotStatusCode;
   chainId?: string;
   createdAt?: number;
-  txHash?: string;
-  receipt?: OneShotStatusReceipt;
-  errorCode?: OneShotErrorCode;
+  txHash?: HexString;
+  receipt?: OneShotSendResult['receipt'];
+  errorCode?: string | OneShotErrorCode;
   errorMessage?: string;
   raw?: OneShotStatusResult;
-}
-
-export interface OneShotWebhookTransactionReceipt {
-  blockHash: string;
-  blockNumber: number;
-  contractAddress: string | null;
-  cumulativeGasUsed: string;
-  from: string;
-  gasPrice: string;
-  gasUsed: string;
-  hash: string;
-  index: number;
-  logs: Array<{
-    address: string;
-    blockHash: string;
-    blockNumber: number;
-    data: string;
-    index: number;
-    topics: string[];
-    transactionHash: string;
-    transactionIndex: number;
-  }>;
-  logsBloom: string;
-  status: number;
-  to: string;
-}
-
-export interface OneShotWebhookData {
-  businessId?: string;
-  chain: number;
-  logs?: Array<{
-    args: unknown[];
-    fragment: Record<string, unknown>;
-    name: string;
-    signature: string;
-    topic: string;
-  }>;
-  transactionExecutionId?: string;
-  transactionExecutionMemo?: string;
-  transactionId: string;
-  transactionReceipt: OneShotWebhookTransactionReceipt;
-  userId?: string | null;
-}
-
-export interface OneShotWebhookPayload {
-  eventName: string;
-  data: OneShotWebhookData;
-  timestamp: number;
-  apiVersion: number;
-  signature: string;
-  raw?: unknown;
-}
-
-export interface RelaySubmissionResult {
-  taskId: string;
-  statusCode: OneShotStatusCode;
-  status: OneShotStatusName;
-  targetAddress: string;
-  paymentToken: string;
-  requiredPaymentAmount: string;
-  context?: string;
-  txHash?: string;
-  externalStatusUrl?: string;
-  errorCode?: OneShotErrorCode;
-  errorMessage?: string;
-  raw?: unknown;
-}
-
-export interface RelayInput {
-  chainId: number;
-  delegationManager: string;
-  permissionContext: string;
-  call: {
-    to: string;
-    data: string;
-    value?: string;
-  };
-  context?: string;
-  taskId?: string;
-  destinationUrl?: string;
 }
 
 export interface RelayerInterface {
@@ -299,8 +254,19 @@ export interface RelayerInterface {
     }>;
   }): Promise<string[]>;
   getStatus(taskId: string): Promise<RelayerStatusResult>;
-  verifyWebhookSignature(rawBody: Buffer, signature: string, keyId?: string): Promise<boolean>;
+}
 
-  relayDelegatedExecution(input: RelayInput): Promise<RelaySubmissionResult>;
-  getRelayStatus(taskId: string): Promise<RelayerStatusResult>;
+export interface IRelayer {
+  readonly name?: string;
+  getCapabilities(chainId: number): Promise<OneShotCapabilities>;
+  getFeeData(
+    params: { chainId: number; paymentToken: Address } | Bundle7710,
+  ): Promise<OneShotFeeData>;
+  estimate7710Transaction(
+    params: { chainId: number; bundle: Bundle7710 } | Bundle7710,
+  ): Promise<OneShotEstimateResult>;
+  send7710Transaction(
+    params: { chainId: number; bundle: Bundle7710 } | Bundle7710,
+  ): Promise<OneShotSendResult>;
+  getStatus(taskId: string): Promise<RelayerStatusResult>;
 }

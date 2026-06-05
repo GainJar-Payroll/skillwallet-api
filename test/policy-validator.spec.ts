@@ -1,204 +1,303 @@
 import { describe, it, expect } from 'bun:test';
-import { PolicyValidatorService } from '../src/runtime/policy/policy-validator.service';
-import type { ProposedAction } from '../src/runtime/schemas/execution-attempt.schema';
-import type { PolicyManifest } from '../src/runtime/policy/policy-types';
-import type { SkillInstallation } from '../src/installations/schemas/skill-installation.schema';
+import {
+  PolicyValidatorService,
+  type PolicyCheckInput,
+} from '../src/runtime/policy/policy-validator.service';
+import type { PermissionManifestDoc } from '../src/common/permissions/permission-manifest.schema';
 
-const USDC = '0x4200000000000000000000000000000000000042';
-const WETH = '0x420000000000000000000000000000000000000b';
-const ROUTER = '0x4200000000000000000000000000000000000101';
-const SMART_ACCOUNT = '0x2222222222222222222222222222222222222222';
+const USER = ('0x' + '11'.repeat(20)) as `0x${string}`;
+const TARGET = ('0x' + '22'.repeat(20)) as `0x${string}`;
+const APPROVED = ('0x' + '33'.repeat(20)) as `0x${string}`;
+const DENIED = ('0x' + '44'.repeat(20)) as `0x${string}`;
+const BURN = '0x0000000000000000000000000000000000000000' as `0x${string}`;
 
-function buildManifest(): PolicyManifest {
+const APPROVED_SELECTOR = '0xaabbccdd' as `0x${string}`;
+const DENIED_SELECTOR = '0xdeadbeef' as `0x${string}`;
+
+function makeManifest(
+  rules: PermissionManifestDoc['rules'] = [],
+  status: PermissionManifestDoc['status'] = 'active',
+): PermissionManifestDoc {
   return {
-    allowedTargets: [ROUTER],
-    allowedSelectors: [],
-    allowedTokens: [USDC, WETH],
-    validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    grantedContext: '0xdeadbeef',
-    grantedDelegationManager: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3',
-    grantedChainId: 8453,
-    rules: [
-      {
-        id: 'r1',
-        enforcement: 'backend-policy',
-        source: 'skillwallet',
-        kind: 'fixed-token-in',
-        label: '',
-        data: { token: USDC },
-      },
-      {
-        id: 'r2',
-        enforcement: 'backend-policy',
-        source: 'skillwallet',
-        kind: 'fixed-token-out',
-        label: '',
-        data: { token: WETH },
-      },
-      {
-        id: 'r3',
-        enforcement: 'backend-policy',
-        source: 'skillwallet',
-        kind: 'fixed-recipient',
-        label: '',
-        data: { recipient: SMART_ACCOUNT },
-      },
-      {
-        id: 'r4',
-        enforcement: 'backend-policy',
-        source: 'skillwallet',
-        kind: 'max-slippage',
-        label: '',
-        data: { maxSlippageBps: 50 },
-      },
-    ],
-  };
-}
-
-function buildInstallation(): SkillInstallation {
-  return {
+    manifestId: 'manifest_1',
     installationId: 'inst_1',
-    userAddress: '0xaaaa',
-    userAddressNormalized: '0xaaaa',
-    smartAccountAddress: SMART_ACCOUNT,
-    smartAccountAddressNormalized: SMART_ACCOUNT.toLowerCase(),
-    chainId: 8453,
-    skillId: 'dca-usdc-weth',
-    adapter: 'dca',
-    executorAddress: '0xbbbb',
-    executorAddressNormalized: '0xbbbb',
-    status: 'active',
-    config: {},
-    permissionManifest: {},
-    budget: {},
-    pricingPlan: {},
-    schedule: {},
-    runtime: {},
-  } as unknown as SkillInstallation;
+    version: 'v1',
+    status,
+    rules,
+  } as unknown as PermissionManifestDoc;
 }
 
-function buildSwapAction(overrides: Partial<ProposedAction> = {}): ProposedAction {
+function makeInput(overrides: Partial<PolicyCheckInput> = {}): PolicyCheckInput {
   return {
     chainId: 8453,
-    target: ROUTER,
-    value: '0x0',
-    calldata: '0x12345678',
-    selector: '0x12345678',
-    decoded: {
-      actionType: 'swap',
-      summary: 'swap USDC->WETH',
-      tokenIn: USDC,
-      tokenOut: WETH,
-      amountIn: '100000000',
-      minAmountOut: '50000000000000000',
-      recipient: SMART_ACCOUNT,
+    userAddress: USER,
+    manifest: null,
+    execution: {
+      description: 'test execution',
+      actions: [
+        {
+          target: APPROVED,
+          value: '0x0',
+          callData: `${APPROVED_SELECTOR}00`,
+        },
+      ],
     },
-    metadata: {},
     ...overrides,
   };
 }
 
-describe('PolicyValidatorService', () => {
+describe('PolicyValidatorService.evaluate', () => {
   const validator = new PolicyValidatorService();
-  const manifest = buildManifest();
-  const installation = buildInstallation();
 
-  it('allows a correct DCA swap action', () => {
-    const result = validator.validate(installation, buildSwapAction(), manifest);
-    expect(result.ok).toBe(true);
-  });
-
-  it('blocks unknown target', () => {
-    const action = buildSwapAction({ target: '0xdead00000000000000000000000000000000dead' });
-    const result = validator.validate(installation, action, manifest);
-    expect(result.ok).toBe(false);
-    expect(result.blockedReason).toBe('target not allowed');
-  });
-
-  it('blocks unknown selector when selectors are listed', () => {
-    const m = { ...manifest, allowedSelectors: ['0xaabbccdd'] };
-    const result = validator.validate(installation, buildSwapAction(), m);
-    expect(result.ok).toBe(false);
-    expect(result.blockedReason).toBe('selector not allowed');
-  });
-
-  it('blocks transfer action', () => {
-    const action = buildSwapAction({
-      decoded: { actionType: 'transfer', summary: 'transfer' },
+  describe('structural checks', () => {
+    it('rejects empty action list', () => {
+      const verdict = validator.evaluate(
+        makeInput({ execution: { description: 'x', actions: [] } }),
+      );
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('no-actions');
     });
-    const result = validator.validate(installation, action, manifest);
-    expect(result.ok).toBe(false);
-    expect(result.blockedReason).toBe('transfer actions blocked');
-  });
 
-  it('blocks unlimited approval', () => {
-    const action = buildSwapAction({
-      value: '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-      decoded: { actionType: 'approve', summary: 'approve', spender: ROUTER },
+    it('rejects malformed target address', () => {
+      const verdict = validator.evaluate(
+        makeInput({
+          execution: {
+            description: 'x',
+            actions: [{ target: 'not-an-address', value: '0x0', callData: '0x12345678' }],
+          },
+        }),
+      );
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('bad-target');
     });
-    const result = validator.validate(installation, action, manifest);
-    expect(result.ok).toBe(false);
-    expect(result.blockedReason).toBe('unlimited approval blocked');
+
+    it('rejects non-zero value transfers (no native value in MVP)', () => {
+      const verdict = validator.evaluate(
+        makeInput({
+          execution: {
+            description: 'x',
+            actions: [{ target: APPROVED, value: '0x1', callData: '0x12345678' }],
+          },
+        }),
+      );
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('no-native-value');
+    });
+
+    it('passes structural check when no manifest is attached', () => {
+      const verdict = validator.evaluate(makeInput());
+      expect(verdict.allowed).toBe(true);
+    });
   });
 
-  it('blocks tokenOut not matching WETH', () => {
-    const action = buildSwapAction({
-      decoded: {
-        ...buildSwapAction().decoded,
-        tokenOut: '0x4200000000000000000000000000000000000099',
+  describe('allow-target', () => {
+    const manifest = makeManifest([
+      {
+        id: 'r-allow',
+        enforcement: 'allow-target',
+        source: 'backend-policy',
+        value: { targets: [APPROVED] },
+        description: 'only allow approved target',
       },
+    ]);
+
+    it('allows when target is in allowlist', () => {
+      const verdict = validator.evaluate(makeInput({ manifest }));
+      expect(verdict.allowed).toBe(true);
     });
-    const result = validator.validate(installation, action, manifest);
-    expect(result.ok).toBe(false);
+
+    it('blocks when target is not in allowlist', () => {
+      const verdict = validator.evaluate(
+        makeInput({
+          manifest,
+          execution: {
+            description: 'x',
+            actions: [{ target: DENIED, value: '0x0', callData: '0x12345678' }],
+          },
+        }),
+      );
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('r-allow');
+      expect(verdict.reason).toContain(DENIED);
+    });
   });
 
-  it('blocks recipient not smart account', () => {
-    const action = buildSwapAction({
-      decoded: {
-        ...buildSwapAction().decoded,
-        recipient: '0x4200000000000000000000000000000000000099',
+  describe('deny-target', () => {
+    const manifest = makeManifest([
+      {
+        id: 'r-deny',
+        enforcement: 'deny-target',
+        source: 'backend-policy',
+        value: { targets: [BURN] },
+        description: 'never call burn address',
       },
+    ]);
+
+    it('allows when target is not in denylist', () => {
+      const verdict = validator.evaluate(makeInput({ manifest }));
+      expect(verdict.allowed).toBe(true);
     });
-    const result = validator.validate(installation, action, manifest);
-    expect(result.ok).toBe(false);
+
+    it('blocks when target is in denylist', () => {
+      const verdict = validator.evaluate(
+        makeInput({
+          manifest,
+          execution: {
+            description: 'x',
+            actions: [{ target: BURN, value: '0x0', callData: '0x12345678' }],
+          },
+        }),
+      );
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('r-deny');
+    });
   });
 
-  it('blocks amount above max (erc20-periodic-spend rule)', () => {
-    const m: PolicyManifest = {
-      ...manifest,
-      rules: [
-        ...manifest.rules,
+  describe('deny-selector', () => {
+    const manifest = makeManifest([
+      {
+        id: 'r-selector',
+        enforcement: 'deny-selector',
+        source: 'backend-policy',
+        value: { selectors: [DENIED_SELECTOR] },
+        description: 'never call deadbeef selector',
+      },
+    ]);
+
+    it('allows when selector is not in denylist', () => {
+      const verdict = validator.evaluate(makeInput({ manifest }));
+      expect(verdict.allowed).toBe(true);
+    });
+
+    it('blocks when selector is in denylist', () => {
+      const verdict = validator.evaluate(
+        makeInput({
+          manifest,
+          execution: {
+            description: 'x',
+            actions: [{ target: APPROVED, value: '0x0', callData: `${DENIED_SELECTOR}00` }],
+          },
+        }),
+      );
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('r-selector');
+    });
+  });
+
+  describe('manifest status', () => {
+    it('blocks when manifest status is rejected', () => {
+      const manifest = makeManifest([], 'rejected');
+      const verdict = validator.evaluate(makeInput({ manifest }));
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('manifest.rejected');
+    });
+
+    it('blocks when manifest status is expired', () => {
+      const manifest = makeManifest([], 'expired');
+      const verdict = validator.evaluate(makeInput({ manifest }));
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('manifest.expired');
+    });
+  });
+
+  describe('rule composition', () => {
+    it('returns first failing rule when multiple rules are present', () => {
+      const manifest = makeManifest([
         {
-          id: 'r5',
-          enforcement: 'backend-policy',
-          source: 'skillwallet',
-          kind: 'erc20-periodic-spend',
-          label: '',
-          data: { periodAmount: '10', tokenAddress: USDC },
+          id: 'r1',
+          enforcement: 'allow-target',
+          source: 'backend-policy',
+          value: { targets: [APPROVED] },
+          description: '',
         },
-      ],
-    };
-    const action = buildSwapAction({
-      decoded: { ...buildSwapAction().decoded, amountIn: '9999999999' },
+        {
+          id: 'r2',
+          enforcement: 'deny-selector',
+          source: 'backend-policy',
+          value: { selectors: [APPROVED_SELECTOR] },
+          description: '',
+        },
+      ]);
+      const verdict = validator.evaluate(makeInput({ manifest }));
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('r2');
     });
-    const result = validator.validate(installation, action, m);
-    expect(result.ok).toBe(false);
+
+    it('passes when all rules pass', () => {
+      const manifest = makeManifest([
+        {
+          id: 'r1',
+          enforcement: 'allow-target',
+          source: 'backend-policy',
+          value: { targets: [APPROVED] },
+          description: '',
+        },
+        {
+          id: 'r2',
+          enforcement: 'deny-selector',
+          source: 'backend-policy',
+          value: { selectors: [DENIED_SELECTOR] },
+          description: '',
+        },
+        {
+          id: 'r3',
+          enforcement: 'erc20-periodic-spend',
+          source: 'backend-policy',
+          value: {},
+          description: '',
+        },
+      ]);
+      const verdict = validator.evaluate(makeInput({ manifest }));
+      expect(verdict.allowed).toBe(true);
+    });
   });
 
-  it('blocks when installation is not active', () => {
-    const result = validator.validate(
-      { ...installation, status: 'paused' },
-      buildSwapAction(),
-      manifest,
-    );
-    expect(result.ok).toBe(false);
-    expect(result.blockedReason).toBe('installation not active');
+  describe('unknown rule enforcement', () => {
+    it('throws POLICY_RULE_UNKNOWN for an unknown enforcement', () => {
+      const manifest = makeManifest([
+        {
+          id: 'r-bad',
+          // @ts-expect-error: intentionally unknown enforcement
+          enforcement: 'this-does-not-exist',
+          source: 'backend-policy',
+          value: {},
+          description: '',
+        },
+      ]);
+      expect(() => validator.evaluate(makeInput({ manifest }))).toThrow();
+    });
   });
 
-  it('blocks when manifest is expired', () => {
-    const expired = { ...manifest, validUntil: new Date(Date.now() - 1000).toISOString() };
-    const result = validator.validate(installation, buildSwapAction(), expired);
-    expect(result.ok).toBe(false);
-    expect(result.blockedReason).toBe('manifest expired');
+  describe('multi-action execution', () => {
+    it('passes when every action in a multi-action execution passes', () => {
+      const verdict = validator.evaluate(
+        makeInput({
+          execution: {
+            description: 'swap',
+            actions: [
+              { target: TARGET, value: '0x0', callData: `${APPROVED_SELECTOR}00` },
+              { target: APPROVED, value: '0x0', callData: `${APPROVED_SELECTOR}00` },
+            ],
+          },
+        }),
+      );
+      expect(verdict.allowed).toBe(true);
+    });
+
+    it('blocks when any action in a multi-action execution fails structural check', () => {
+      const verdict = validator.evaluate(
+        makeInput({
+          execution: {
+            description: 'swap',
+            actions: [
+              { target: APPROVED, value: '0x0', callData: `${APPROVED_SELECTOR}00` },
+              { target: '0xnope', value: '0x0', callData: `${APPROVED_SELECTOR}00` },
+            ],
+          },
+        }),
+      );
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.blockedBy).toBe('bad-target');
+    });
   });
 });

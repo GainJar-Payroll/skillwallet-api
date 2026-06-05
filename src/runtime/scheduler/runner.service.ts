@@ -1,404 +1,459 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InstallationsService } from '../../installations/installations.service';
-import { ExecutionAttemptsService } from '../execution-attempts.service';
-import { ActivityLogService } from '../activity-log.service';
+import { ConfigService } from '@nestjs/config';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model } from 'mongoose';
+import { v4 as uuidv4 } from 'uuid';
+import { AppError } from '../../common/errors/app-error';
+import { ErrorCode } from '../../common/errors/error-codes';
+import { isSupportedChain } from '../../chains/registry/chains';
 import { AdapterRegistryService } from '../adapters/adapter-registry.service';
 import { PolicyValidatorService } from '../policy/policy-validator.service';
 import { OneShotRelayerService } from '../relayers/oneshot-relayer.service';
-import { OneShotBundleValidator } from '../relayers/oneshot-bundle-validator';
-import { SkillInstallation } from '../../installations/schemas/skill-installation.schema';
-import { ExecutionAttempt } from '../schemas/execution-attempt.schema';
-import { nextRunFromFrequency } from '../../common/utils/time';
-import { RelaySubmissionResult } from '../relayers/relayer.interface';
-import { PolicyManifest } from '../policy/policy-types';
-import { AppError } from '../../common/errors/app-error';
-import { ErrorCode } from '../../common/errors/error-codes';
-
-interface GrantedResponse {
-  chainId: number;
-  context: string;
-  delegationManager: string;
-}
+import {
+  assertChainSupportedByCapabilities,
+  assertPaymentTokenSupported,
+  validateBundleShape,
+} from '../relayers/oneshot-bundle-validator';
+import {
+  SkillInstallation,
+  SkillInstallationDoc,
+} from '../../installations/schemas/skill-installation.schema';
+import {
+  DelegationGrant,
+  DelegationGrantDoc,
+} from '../../delegations/schemas/delegation-grant.schema';
+import {
+  PermissionManifest,
+  PermissionManifestDoc,
+} from '../../common/permissions/permission-manifest.schema';
+import { ActivityLog, ActivityLogDoc } from '../schemas/activity-log.schema';
+import {
+  ExecutionAttempt,
+  ExecutionAttemptDoc,
+  AttemptStatus,
+  ProposedExecution,
+  RelayRecord,
+} from '../schemas/execution-attempt.schema';
+import type { Address } from '../../common/types/evm';
+import type { OneShotDelegation } from '../relayers/relayer.interface';
 
 @Injectable()
 export class RunnerService {
   private readonly logger = new Logger(RunnerService.name);
+  private readonly paymentToken: Address;
+  private readonly testnetChainId: number;
+  private readonly mainnetChainId: number;
 
   constructor(
-    private readonly installations: InstallationsService,
-    private readonly attempts: ExecutionAttemptsService,
-    private readonly activity: ActivityLogService,
-    private readonly adapters: AdapterRegistryService,
-    private readonly policy: PolicyValidatorService,
+    @InjectConnection() private readonly conn: Connection,
+    @InjectModel(SkillInstallation.name)
+    private readonly installationModel: Model<SkillInstallationDoc>,
+    @InjectModel(DelegationGrant.name)
+    private readonly grantModel: Model<DelegationGrantDoc>,
+    @InjectModel(PermissionManifest.name)
+    private readonly manifestModel: Model<PermissionManifestDoc>,
+    @InjectModel(ExecutionAttempt.name)
+    private readonly attemptModel: Model<ExecutionAttemptDoc>,
+    @InjectModel(ActivityLog.name)
+    private readonly activityModel: Model<ActivityLogDoc>,
     private readonly relayer: OneShotRelayerService,
-    private readonly validator: OneShotBundleValidator,
-  ) {}
+    private readonly adapterRegistry: AdapterRegistryService,
+    private readonly policy: PolicyValidatorService,
+    private readonly config: ConfigService,
+  ) {
+    const get = (key: string): string | undefined => this.config?.get?.(key) as string | undefined;
+    this.paymentToken = (get('ONESHOT_PAYMENT_TOKEN_ADDRESS') ||
+      '0x0000000000000000000000000000000000000000') as Address;
+    this.testnetChainId = Number(get('ONESHOT_TESTNET_CHAIN_ID')) || 84532;
+    this.mainnetChainId = Number(get('ONESHOT_MAINNET_CHAIN_ID')) || 8453;
+  }
 
-  async run(installationId: string, options?: { force?: boolean }): Promise<ExecutionAttempt> {
-    const installation = await this.installations.findById(installationId);
-    const attempt = await this.attempts.create({
-      installationId,
-      skillId: installation.skillId,
-      adapter: installation.adapter,
-      chainId: installation.chainId,
-      triggerReason: options?.force ? 'manual:force' : 'scheduler:due',
+  async runByInstallationId(installationId: string): Promise<ExecutionAttemptDoc> {
+    const installation = await this.installationModel.findOne({ installationId }).exec();
+    if (!installation) {
+      throw AppError.notFound(`installation ${installationId}`);
+    }
+    return this.executeRun(installation);
+  }
+
+  async run(installationId: string, _options?: { force?: boolean }): Promise<ExecutionAttemptDoc> {
+    return this.runByInstallationId(installationId);
+  }
+
+  async runDue(limit: number): Promise<{ attemptIds: string[]; skipped: number }> {
+    const due = await this.installationModel
+      .find({
+        status: 'active',
+        $or: [
+          { 'schedule.nextRunAt': { $lte: new Date() } },
+          { 'schedule.nextRunAt': { $exists: false } },
+        ],
+      })
+      .limit(limit)
+      .exec();
+    const attemptIds: string[] = [];
+    let skipped = 0;
+    for (const inst of due) {
+      try {
+        const a = await this.executeRun(inst);
+        attemptIds.push(a.attemptId);
+      } catch (err) {
+        skipped += 1;
+        this.logger.warn(
+          `runDue: skipped installation=${inst.installationId} reason=${(err as Error).message}`,
+        );
+      }
+    }
+    return { attemptIds, skipped };
+  }
+
+  private async executeRun(installation: SkillInstallationDoc): Promise<ExecutionAttemptDoc> {
+    const attemptId = `att_${uuidv4()}`;
+    const now = new Date();
+    const chainId = installation.chainId;
+    const userAddress = installation.userAddress as Address;
+    const smartAccountAddress = installation.smartAccountAddress as Address;
+
+    const attempt = await this.attemptModel.create({
+      attemptId,
+      installationId: installation.installationId,
+      skillType: installation.skillType,
+      chainId,
+      userAddress,
+      status: 'queued',
     });
 
-    const locked = await this.installations.lockInstallation(installationId, 'runner');
-    if (!locked) {
-      await this.attempts.updateStatus(attempt.attemptId, 'skipped', {
-        error: 'installation is locked',
+    const log = async (
+      status: AttemptStatus,
+      reason: string,
+      extra: Record<string, unknown> = {},
+    ) => {
+      attempt.status = status;
+      attempt.error = { code: extra.code as string, message: reason };
+      if (extra.proposed) attempt.proposed = extra.proposed as ExecutionAttemptDoc['proposed'];
+      if (extra.relay) attempt.relay = extra.relay as RelayRecord;
+      await attempt.save();
+      await this.activityModel.create({
+        kind: 'attempt-status',
+        installationId: installation.installationId,
+        attemptId,
+        status,
+        reason,
+        meta: extra,
       });
-      throw new Error('installation is locked by another runner');
-    }
+    };
 
     try {
-      const failClosed = this.checkFailClosed(installation);
-      if (failClosed) {
-        return await this.markFailed(
-          installationId,
-          attempt.attemptId,
-          installation,
-          new AppError(ErrorCode.INVALID_STATE, failClosed, { installationId }),
-          'Fail-closed pre-check',
-        );
-      }
-
-      const adapter = this.adapters.resolve(installation.adapter);
-      const now = new Date();
-
-      await this.attempts.updateStatus(attempt.attemptId, 'checking_trigger');
-      const trigger = adapter.checkTrigger({ installation, now });
-      if (!trigger.shouldRun && !options?.force) {
-        await this.attempts.updateStatus(attempt.attemptId, 'skipped', { error: trigger.reason });
-        await this.activity.log({
-          installationId,
-          attemptId: attempt.attemptId,
-          userAddress: installation.userAddress,
-          chainId: installation.chainId,
-          type: 'execution.skipped',
-          message: `Skipped: ${trigger.reason}`,
+      if (!isSupportedChain(chainId)) {
+        await log('failed', `chainId ${chainId} not in MVP supported set`, {
+          code: ErrorCode.CHAIN_UNSUPPORTED,
         });
-        return (await this.attempts.findById(attempt.attemptId))!;
+        throw AppError.notConfigured(`chainId=${chainId}`, 'chain not in MVP supported set');
       }
 
-      await this.attempts.updateStatus(attempt.attemptId, 'building_action');
-      const { proposedAction } = await adapter.buildAction({ installation, now });
+      const adapter = this.adapterRegistry.get(installation.skillType);
+      const parsedConfig = this.adapterRegistry.parseConfig(
+        installation.skillType,
+        installation.config,
+      );
 
-      await this.attempts.updateStatus(attempt.attemptId, 'policy_checking', { proposedAction });
-      const manifest = installation.permissionManifest as unknown as PolicyManifest;
-      const granted = this.resolveGrantedResponse(installation);
-      const policyResult = this.policy.validate(installation, proposedAction, {
-        allowedTargets: manifest.allowedTargets ?? [],
-        allowedSelectors: manifest.allowedSelectors ?? [],
-        allowedTokens: manifest.allowedTokens ?? [],
-        rules: manifest.rules ?? [],
-        validUntil: manifest.validUntil,
-        grantedContext: granted?.context,
-        grantedDelegationManager: granted?.delegationManager,
-        grantedChainId: granted?.chainId,
-      });
-      if (!policyResult.ok) {
-        await this.attempts.updateStatus(attempt.attemptId, 'blocked', {
-          policyResult,
-          error: policyResult.blockedReason,
-        });
-        await this.activity.log({
-          installationId,
-          attemptId: attempt.attemptId,
-          userAddress: installation.userAddress,
-          chainId: installation.chainId,
-          type: 'execution.blocked',
-          message: `Blocked by policy: ${policyResult.blockedReason}`,
-          metadata: { policyResult },
-        });
-        return (await this.attempts.findById(attempt.attemptId))!;
-      }
-
-      if (!granted) {
-        return await this.markFailed(
-          installationId,
-          attempt.attemptId,
-          installation,
-          new AppError(
-            ErrorCode.MISSING_PERMISSION_CONTEXT,
-            'Cannot relay: installation has no usable granted PermissionResponse',
-          ),
-          'Missing granted permission',
+      const grant = await this.grantModel
+        .findOne({
+          installationId: installation.installationId,
+          chainId,
+          status: 'redeemable',
+        })
+        .sort({ createdAt: -1 })
+        .exec();
+      if (!grant) {
+        await log('failed', 'no active delegation grant', { code: ErrorCode.NO_ACTIVE_GRANT });
+        throw new AppError(
+          ErrorCode.NO_ACTIVE_GRANT,
+          412,
+          `Installation ${installation.installationId} has no active delegation grant`,
         );
       }
 
-      const bundle = this.buildBundle(installation, granted, proposedAction);
+      const relay = {
+        delegate: grant.delegate as Address,
+        feeCollector: installation.runtime?.oneShotFeeCollector as Address,
+        paymentToken: installation.runtime?.paymentToken as Address,
+        requiredPaymentAmount: installation.runtime?.oneShotRequiredPaymentAmount ?? '0',
+      };
 
-      try {
-        this.validator.validateShape(bundle);
-      } catch (err) {
-        return await this.markFailed(
-          installationId,
-          attempt.attemptId,
-          installation,
-          err as AppError,
-          'Bundle shape invalid',
-        );
-      }
-
-      await this.attempts.updateStatus(attempt.attemptId, 'relaying');
-
-      let estimateContext: string;
-      let requiredPaymentAmountEstimate: string;
-      try {
-        const estimate = await this.relayer.estimate7710Transaction({
-          ...bundle,
-          context: undefined,
-        });
-        if (!estimate.success) {
-          throw new AppError(
-            ErrorCode.ONESHOT_SIMULATION_FAILED,
-            `1Shot estimate returned success=false: ${estimate.error ?? 'unknown'}`,
-            { estimate },
-          );
-        }
-        if (!estimate.context) {
-          throw new AppError(
-            ErrorCode.MISSING_ONESHOT_CONTEXT,
-            '1Shot estimate did not return a context (cannot relay without a price-lock quote)',
-            { estimate },
-          );
-        }
-        estimateContext = estimate.context;
-        requiredPaymentAmountEstimate = estimate.requiredPaymentAmount;
-      } catch (err) {
-        return await this.markFailed(
-          installationId,
-          attempt.attemptId,
-          installation,
-          err as AppError,
-          'Estimate failed',
-        );
-      }
-
-      try {
-        this.validator.validateContext(
-          estimateContext,
-          bundle.chainId,
-          this.relayer.getPaymentTokenAddress(),
-        );
-      } catch (err) {
-        return await this.markFailed(
-          installationId,
-          attempt.attemptId,
-          installation,
-          err as AppError,
-          'Quote context invalid',
-        );
-      }
-
-      await this.attempts.attachQuoteContext(attempt.attemptId, {
-        context: estimateContext,
-        requiredPaymentAmount: requiredPaymentAmountEstimate,
-        method: 'relayer_send7710Transaction',
-      });
-
-      let relayResult: RelaySubmissionResult;
-      try {
-        relayResult = await this.relayer.relayDelegatedExecution({
-          chainId: installation.chainId,
-          delegationManager: granted.delegationManager,
-          permissionContext: granted.context,
-          call: {
-            to: proposedAction.target,
-            data: proposedAction.calldata,
-            value: proposedAction.value === '0x0' ? undefined : proposedAction.value,
-          },
-          context: estimateContext,
-        });
-      } catch (err) {
-        return await this.markFailed(
-          installationId,
-          attempt.attemptId,
-          installation,
-          err as AppError,
-          'Send failed',
-        );
-      }
-
-      const finalStatus =
-        relayResult.status === 'confirmed'
-          ? 'confirmed'
-          : relayResult.status === 'rejected' || relayResult.status === 'reverted'
-            ? 'failed'
-            : 'relayed';
-      await this.attempts.updateStatus(attempt.attemptId, finalStatus, {
-        relay: {
-          provider: '1shot',
-          taskId: relayResult.taskId,
-          statusCode: relayResult.statusCode,
-          status: relayResult.status,
-          targetAddress: relayResult.targetAddress,
-          paymentToken: relayResult.paymentToken,
-          requiredPaymentAmount: relayResult.requiredPaymentAmount,
-          context: relayResult.context,
-          txHash: relayResult.txHash,
-          externalStatusUrl: relayResult.externalStatusUrl,
-          errorCode: relayResult.errorCode,
-          errorMessage: relayResult.errorMessage,
-          quoteContext: estimateContext,
-          requiredPaymentAmountEstimate,
-          method: 'relayer_send7710Transaction',
+      const trigger = await adapter.checkTrigger({
+        installationId: installation.installationId,
+        userAddress,
+        smartAccountAddress,
+        chainId,
+        now,
+        config: parsedConfig,
+        relay,
+        grant: {
+          grantId: grant.grantId,
+          chainId: grant.chainId,
+          delegator: grant.delegator as Address,
+          delegate: grant.delegate as Address,
+          permissionContext: grant.permissionContext as unknown as OneShotDelegation[],
+          expiresAt: grant.expiresAt,
         },
       });
-
-      if (finalStatus === 'confirmed' || finalStatus === 'relayed') {
-        await this.activity.log({
-          installationId,
-          attemptId: attempt.attemptId,
-          userAddress: installation.userAddress,
-          chainId: installation.chainId,
-          type: finalStatus === 'confirmed' ? 'execution.confirmed' : 'execution.relayed',
-          message:
-            finalStatus === 'confirmed'
-              ? `Confirmed: ${relayResult.txHash}`
-              : `Relayed via 1Shot: ${relayResult.taskId}`,
-          metadata: { relayResult },
-        });
-        await this.scheduleNextRun(installation);
-      } else {
-        await this.activity.log({
-          installationId,
-          attemptId: attempt.attemptId,
-          userAddress: installation.userAddress,
-          chainId: installation.chainId,
-          type: 'execution.failed',
-          message: `1Shot returned ${relayResult.statusCode}: ${relayResult.errorMessage ?? 'unknown'}`,
-        });
-        await this.installations.recordFailure(
-          installationId,
-          `relayer statusCode=${relayResult.statusCode}`,
-        );
-        await this.scheduleNextRun(installation);
+      if (!trigger.shouldRun) {
+        await log('skipped', trigger.reason, { code: 'TRIGGER_NOT_DUE' });
+        if (trigger.nextEligibleAt) {
+          installation.schedule = {
+            ...installation.schedule,
+            nextRunAt: trigger.nextEligibleAt,
+          };
+          await installation.save();
+        }
+        return attempt;
       }
 
-      return (await this.attempts.findById(attempt.attemptId))!;
-    } finally {
-      await this.installations.unlockInstallation(installationId);
-    }
-  }
+      attempt.status = 'building_action';
+      await attempt.save();
 
-  private checkFailClosed(installation: SkillInstallation): string | null {
-    if (installation.status !== 'active') {
-      return `installation status is "${installation.status}", not "active"`;
-    }
-    const grant = installation.walletPermissionGrant as
-      | { status?: string; responses?: GrantedResponse[]; expiresAt?: Date | string }
-      | undefined;
-    if (!grant) {
-      return 'installation has no walletPermissionGrant';
-    }
-    if (grant.status !== 'granted') {
-      return `grant status is "${grant.status ?? 'unknown'}", not "granted"`;
-    }
-    if (!grant.responses || grant.responses.length === 0) {
-      return 'grant has no PermissionResponse[]';
-    }
-    const response = grant.responses[0];
-    if (!response?.context || !response?.delegationManager) {
-      return 'granted PermissionResponse is missing context or delegationManager';
-    }
-    if (response.chainId !== installation.chainId) {
-      return `granted PermissionResponse chainId ${response.chainId} does not match installation chainId ${installation.chainId}`;
-    }
-    if (grant.expiresAt && new Date(grant.expiresAt).getTime() <= Date.now()) {
-      return `grant expired at ${new Date(grant.expiresAt).toISOString()}`;
-    }
-    const delegation = installation.delegation as
-      | { permissionContext?: string; delegationManager?: string }
-      | undefined;
-    if (!delegation?.permissionContext || !delegation?.delegationManager) {
-      return 'installation has no usable delegation record';
-    }
-    if (delegation.permissionContext !== response.context) {
-      return 'delegation permissionContext does not match granted PermissionResponse.context';
-    }
-    const dependencies = installation.dependencies ?? [];
-    const blocking = dependencies.find(
-      (dep) => dep.status === 'pending' || dep.status === 'deploying' || dep.status === 'failed',
-    );
-    if (blocking) {
-      return `dependency on chainId=${blocking.chainId} is in "${blocking.status}" state`;
-    }
-    return null;
-  }
-
-  private resolveGrantedResponse(installation: SkillInstallation): GrantedResponse | null {
-    const grant = installation.walletPermissionGrant as
-      | { responses?: GrantedResponse[]; status?: string }
-      | undefined;
-    if (!grant || grant.status !== 'granted' || !grant.responses) {
-      return null;
-    }
-    const response =
-      grant.responses.find((r) => r.chainId === installation.chainId) ?? grant.responses[0];
-    if (!response?.context || !response?.delegationManager) {
-      return null;
-    }
-    return response;
-  }
-
-  private async markFailed(
-    installationId: string,
-    attemptId: string,
-    installation: SkillInstallation,
-    err: AppError,
-    prefix: string,
-  ): Promise<ExecutionAttempt> {
-    await this.attempts.updateStatus(attemptId, 'failed', {
-      error: `${prefix}: ${err.message}`,
-    });
-    await this.activity.log({
-      installationId,
-      attemptId,
-      userAddress: installation.userAddress,
-      chainId: installation.chainId,
-      type: 'execution.failed',
-      message: `${prefix}: ${err.message}`,
-      metadata: { code: err.code, details: err.details },
-    });
-    await this.installations.recordFailure(installationId, err.message);
-    await this.scheduleNextRun(installation);
-    return (await this.attempts.findById(attemptId))!;
-  }
-
-  private buildBundle(
-    installation: SkillInstallation,
-    granted: GrantedResponse,
-    proposedAction: { target: string; calldata: string; value: string },
-  ) {
-    return {
-      chainId: installation.chainId,
-      delegationManager: granted.delegationManager,
-      transactions: [
+      const built = await adapter.buildAction(
         {
-          permissionContext: this.validator.parsePermissionContextString(granted.context),
-          executions: [
-            {
-              target: proposedAction.target,
-              value: proposedAction.value === '0x0' ? '0x0' : proposedAction.value,
-              data: proposedAction.calldata,
-            },
-          ],
+          installationId: installation.installationId,
+          userAddress,
+          smartAccountAddress,
+          chainId,
+          now,
+          config: parsedConfig,
+          relay,
+          grant: {
+            grantId: grant.grantId,
+            chainId: grant.chainId,
+            delegator: grant.delegator as Address,
+            delegate: grant.delegate as Address,
+            permissionContext: grant.permissionContext as unknown as OneShotDelegation[],
+            expiresAt: grant.expiresAt,
+          },
         },
-      ],
-    };
+        parsedConfig,
+      );
+
+      validateBundleShape(built.bundle);
+
+      attempt.proposed = {
+        description: built.description,
+        executions: built.executions.map((e) => ({
+          description: e.description,
+          actions: e.actions.map((a) => ({
+            target: a.target,
+            value: a.value,
+            data: a.callData,
+          })),
+        })) as unknown as ProposedExecution[],
+      };
+      attempt.status = 'policy_checking';
+      await attempt.save();
+
+      const manifest = await this.manifestModel
+        .findOne({ installationId: installation.installationId, status: 'active' })
+        .exec();
+
+      for (const exec of built.executions) {
+        const verdict = this.policy.evaluate({
+          chainId,
+          userAddress,
+          manifest,
+          execution: {
+            description: exec.description,
+            actions: exec.actions.map((a) => ({
+              target: a.target,
+              value: a.value,
+              callData: a.callData,
+            })),
+          },
+        });
+        if (!verdict.allowed) {
+          await log('blocked', verdict.reason, { code: verdict.blockedBy ?? 'POLICY_BLOCKED' });
+          throw new AppError(ErrorCode.POLICY_BLOCKED, 403, verdict.reason, verdict);
+        }
+      }
+
+      attempt.status = 'quoting';
+      await attempt.save();
+
+      const capabilities = await this.relayer.getCapabilities(chainId);
+      assertChainSupportedByCapabilities(capabilities, chainId);
+      assertPaymentTokenSupported(capabilities, chainId, this.paymentToken);
+
+      let estimate;
+      try {
+        estimate = await this.relayer.estimate7710Transaction({
+          chainId,
+          bundle: built.bundle,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `relayer.estimate7710Transaction failed (continuing without quote): ${(err as Error).message}`,
+        );
+      }
+
+      attempt.relay = {
+        targetAddress: built.bundle.transactions[0].executions.map((e) => e.target).join(','),
+        paymentToken: this.paymentToken,
+        requiredPaymentAmount: estimate?.requiredPaymentAmount,
+        context: {
+          environment: capabilities.meta?.environment,
+          relayerVersion: capabilities.meta?.version,
+        },
+        method: 'relayer_send7710Transaction',
+      };
+      attempt.status = 'relaying';
+      await attempt.save();
+
+      const sendResult = await this.relayer.send7710Transaction({
+        chainId,
+        bundle: built.bundle,
+      });
+
+      attempt.relay = {
+        ...attempt.relay,
+        taskId: sendResult.taskId,
+        statusCode: sendResult.statusCode,
+        status: sendResult.status,
+        txHash: sendResult.txHash,
+        receipt: sendResult.receipt as RelayRecord['receipt'],
+        errorCode: sendResult.errorCode ? Number(sendResult.errorCode) : undefined,
+        errorMessage: sendResult.errorMessage,
+      };
+
+      if (sendResult.status === 'rejected' || sendResult.status === 'reverted') {
+        attempt.status = 'failed';
+        await attempt.save();
+        await this.activityModel.create({
+          kind: 'attempt-status',
+          installationId: installation.installationId,
+          attemptId,
+          status: 'failed',
+          reason: `relayer ${sendResult.status}: ${sendResult.errorMessage ?? sendResult.errorCode ?? 'unknown'}`,
+          createdAt: new Date(),
+        });
+        return attempt;
+      }
+
+      attempt.status = 'relayed';
+      await attempt.save();
+
+      let finalStatus: AttemptStatus = 'relayed';
+      if (sendResult.status === 'confirmed') {
+        finalStatus = 'confirmed';
+      } else {
+        const polled = await this.pollUntilSettled(sendResult.taskId);
+        if (polled.status === 'confirmed') finalStatus = 'confirmed';
+        else if (polled.status === 'rejected' || polled.status === 'reverted')
+          finalStatus = 'failed';
+        attempt.relay = {
+          ...attempt.relay,
+          taskId: polled.taskId,
+          statusCode: polled.statusCode,
+          status: polled.status,
+          txHash: polled.txHash ?? attempt.relay?.txHash,
+          receipt: polled.receipt ?? attempt.relay?.receipt,
+        };
+      }
+      attempt.status = finalStatus;
+      await attempt.save();
+
+      if (finalStatus === 'confirmed') {
+        installation.runtime = {
+          ...installation.runtime,
+          lastSuccessAt: new Date(),
+          lastAttemptId: attempt.attemptId,
+          successCount: (installation.runtime?.successCount ?? 0) + 1,
+          lastTxHash: attempt.relay?.txHash,
+        } as SkillInstallation['runtime'];
+        installation.schedule = {
+          ...installation.schedule,
+          nextRunAt: adapter.getNextRunAt(parsedConfig, new Date()),
+        };
+        await installation.save();
+      } else {
+        installation.runtime = {
+          ...installation.runtime,
+          lastFailureAt: new Date(),
+          lastAttemptId: attempt.attemptId,
+          failureCount: (installation.runtime?.failureCount ?? 0) + 1,
+        } as SkillInstallation['runtime'];
+        await installation.save();
+      }
+
+      await this.activityModel.create({
+        kind: 'attempt-status',
+        installationId: installation.installationId,
+        attemptId,
+        status: finalStatus,
+        reason:
+          finalStatus === 'confirmed'
+            ? `txHash=${attempt.relay?.txHash ?? 'n/a'}`
+            : 'relayer did not confirm',
+        createdAt: new Date(),
+      });
+
+      return attempt;
+    } catch (err) {
+      const code = (err as AppError).code ?? ErrorCode.RUNNER_ERROR;
+      const message = (err as Error).message ?? 'unknown runner error';
+      if (
+        attempt.status !== 'failed' &&
+        attempt.status !== 'blocked' &&
+        attempt.status !== 'skipped'
+      ) {
+        attempt.status = 'failed';
+        attempt.error = { code, message };
+        await attempt.save();
+      }
+      await this.activityModel.create({
+        kind: 'attempt-error',
+        installationId: installation.installationId,
+        attemptId,
+        status: 'failed',
+        reason: message,
+        meta: { code },
+        createdAt: new Date(),
+      });
+      throw err;
+    }
   }
 
-  private async scheduleNextRun(installation: SkillInstallation): Promise<void> {
-    const freq = installation.schedule?.frequency as 'daily' | 'weekly' | 'monthly' | undefined;
-    if (!freq) {
-      await this.installations.updateNextRunAt(installation.installationId, null, new Date());
-      return;
+  private async pollUntilSettled(taskId: string): Promise<{
+    taskId: string;
+    status: 'pending' | 'submitted' | 'confirmed' | 'rejected' | 'reverted';
+    statusCode: 100 | 110 | 200 | 400 | 500;
+    txHash?: `0x${string}`;
+    receipt?: {
+      blockNumber?: string;
+      blockHash?: `0x${string}`;
+      gasUsed?: string;
+      status?: string;
+    };
+  }> {
+    const maxAttempts = 6;
+    const delayMs = 1500;
+    for (let i = 0; i < maxAttempts; i += 1) {
+      await new Promise((r) => setTimeout(r, delayMs));
+      const r = await this.relayer.getStatus(taskId);
+      if (r.status === 'confirmed' || r.status === 'rejected' || r.status === 'reverted') {
+        return {
+          taskId: r.taskId,
+          status: r.status,
+          statusCode: r.statusCode,
+          txHash: r.txHash as `0x${string}` | undefined,
+          receipt: r.receipt as
+            | {
+                blockNumber?: string;
+                blockHash?: `0x${string}`;
+                gasUsed?: string;
+                status?: string;
+              }
+            | undefined,
+        };
+      }
     }
-    const base = (installation.schedule?.nextRunAt as Date | null | undefined) ?? new Date();
-    const next = nextRunFromFrequency(base, freq);
-    await this.installations.updateNextRunAt(installation.installationId, next, new Date());
+    return { taskId, status: 'submitted', statusCode: 110 };
   }
 }

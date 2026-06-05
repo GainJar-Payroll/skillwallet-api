@@ -1,31 +1,42 @@
 import { Injectable } from '@nestjs/common';
-import { DcaAdapter } from './dca.adapter';
-import { AerodromeVoteAdapter } from './aerodrome-vote.adapter';
-import { AdapterId, SkillAdapter } from './skill-adapter.interface';
+import { AppError } from '../../common/errors/app-error';
+import type { ISkillAdapter, SkillAdapterKind, SkillConfig } from './skill-adapter.interface';
+import { DirectRouterDcaAdapter } from './direct-router-dca.adapter';
+import { GmSelfCallAdapter } from './gm-self-call.adapter';
 
 @Injectable()
 export class AdapterRegistryService {
-  private readonly adapters: Map<AdapterId, SkillAdapter>;
+  private readonly map = new Map<SkillAdapterKind, ISkillAdapter>();
 
   constructor(
-    private readonly dcaAdapter: DcaAdapter,
-    private readonly aerodromeAdapter: AerodromeVoteAdapter,
+    directRouterDcaAdapter: DirectRouterDcaAdapter,
+    gmSelfCallAdapter: GmSelfCallAdapter,
   ) {
-    this.adapters = new Map<AdapterId, SkillAdapter>([
-      ['dca', this.dcaAdapter],
-      ['aerodrome-vote', this.aerodromeAdapter],
-    ]);
+    this.register(directRouterDcaAdapter);
+    this.register(gmSelfCallAdapter);
   }
 
-  resolve(adapterId: string): SkillAdapter {
-    const adapter = this.adapters.get(adapterId as AdapterId);
+  register(adapter: ISkillAdapter): void {
+    this.map.set(adapter.kind, adapter);
+  }
+
+  get(kind: string): ISkillAdapter {
+    const adapter = this.map.get(kind as SkillAdapterKind);
     if (!adapter) {
-      throw new Error(`No adapter registered for "${adapterId}"`);
+      throw AppError.notConfigured(`skillAdapter=${kind}`, `No adapter registered for "${kind}"`);
     }
     return adapter;
   }
 
-  has(adapterId: string): boolean {
-    return this.adapters.has(adapterId as AdapterId);
+  resolve(kind: string): ISkillAdapter {
+    return this.get(kind);
+  }
+
+  list(): ISkillAdapter[] {
+    return [...this.map.values()];
+  }
+
+  parseConfig(kind: string, config: unknown): SkillConfig {
+    return this.get(kind).parseConfig(config);
   }
 }
