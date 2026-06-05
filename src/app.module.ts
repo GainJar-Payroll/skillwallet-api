@@ -1,35 +1,49 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { EnvModule } from './config/env.module';
-import { DatabaseModule } from './database/database.module';
-import { SkillsModule } from './skills/skills.module';
-import { InstallationsModule } from './installations/installations.module';
-import { PermissionsModule } from './permissions/permissions.module';
-import { ExecutorsModule } from './executors/executors.module';
-import { RuntimeModule } from './runtime/runtime.module';
-import { HealthModule } from './health/health.module';
-import { ChainsModule } from './chains/chains.module';
-import { ResponseEnvelopeModule } from './common/response/response-envelope.module';
-import { AuthModule } from './common/auth/auth.module';
-import { ProofModule } from './runtime/proof/proof.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { MongooseModule } from '@nestjs/mongoose';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
+import configuration, { validationSchema } from './config/configuration';
+import { ExecutorModule } from './modules/executor/executor.module';
+import { SkillsModule } from './modules/skills/skills.module';
+import { DelegationModule } from './modules/delegation/delegation.module';
+import { InstallationsModule } from './modules/installations/installations.module';
+import { RunnerModule } from './modules/runner/runner.module';
+import { OneShotModule } from './modules/oneshot/oneshot.module';
+import { X402Module } from './modules/x402/x402.module';
+import { VeniceModule } from './modules/venice/venice.module';
+import { ProofModule } from './modules/proof/proof.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      validationSchema,
+      load: [configuration],
     }),
-    EnvModule,
-    ResponseEnvelopeModule,
-    AuthModule,
-    DatabaseModule,
-    ChainsModule,
+    MongooseModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (c: ConfigService) => {
+        const uri = c.get<string>('mongodbUri');
+        const dbName = c.get<string>('mongodbDbName');
+        return dbName ? { uri, dbName } : { uri };
+      },
+    }),
+    ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 10 }]),
+    ExecutorModule,
+    OneShotModule,
+    X402Module,
+    VeniceModule,
     SkillsModule,
-    ExecutorsModule,
+    DelegationModule,
     InstallationsModule,
-    PermissionsModule,
-    RuntimeModule,
-    HealthModule,
+    RunnerModule,
     ProofModule,
+    AdminModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}
