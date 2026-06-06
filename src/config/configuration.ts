@@ -13,7 +13,6 @@ export const validationSchema = Joi.object({
   BASE_MAINNET_RPC_URL: Joi.string().uri().required(),
   DEFAULT_CHAIN_ID: Joi.number().valid(84532, 8453).default(84532),
   ONESHOT_RELAYER_URL: Joi.string().uri().required(),
-  PIMLICO_BUNDLER_URL: Joi.string().uri().optional(),
   VENICE_API_BASE: Joi.string().uri().default('https://api.venice.ai/api/v1'),
   VENICE_MODEL: Joi.string().default('google/gemini-2.5-flash'),
   VENICE_TOPUP_AMOUNT_USD: Joi.number().default(5),
@@ -36,7 +35,6 @@ export default () => ({
   },
   defaultChainId: parseInt(process.env.DEFAULT_CHAIN_ID!, 10) || 84532,
   oneShotRelayerUrl: process.env.ONESHOT_RELAYER_URL!,
-  pimlicoBundlerUrl: process.env.PIMLICO_BUNDLER_URL,
   venice: {
     apiBase: process.env.VENICE_API_BASE || 'https://api.venice.ai/api/v1',
     model: process.env.VENICE_MODEL || 'google/gemini-2.5-flash',

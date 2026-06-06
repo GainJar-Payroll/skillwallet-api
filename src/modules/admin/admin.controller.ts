@@ -7,13 +7,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import {
-  ApiOkResponse,
-  ApiOperation,
-  ApiParam,
-  ApiSecurity,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiParam, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AdminApiKeyGuard } from '../../common/guards/admin-api-key.guard';
 import { ExecutorService } from '../executor/executor.service';
@@ -37,6 +31,7 @@ const GENERIC_DCA_TEMPLATE: CreateSkillDto = {
       '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4',
     ],
     selectors: [
+      'transfer(address,uint256)',
       'approve(address,uint256)',
       'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))',
     ],
@@ -58,8 +53,7 @@ const GENERIC_DCA_TEMPLATE: CreateSkillDto = {
       type: 'number',
       required: true,
       defaultValue: '10000000',
-      description:
-        'Amount of USDC to swap per run in base units. Default: 10 USDC = 10000000',
+      description: 'Amount of USDC to swap per run in base units. Default: 10 USDC = 10000000',
     },
   ],
   isActive: true,
@@ -115,10 +109,7 @@ export class AdminController {
   })
   async seedSkills() {
     const seeded: string[] = [];
-    await this.skillsService.upsertByName(
-      GENERIC_DCA_TEMPLATE.name,
-      GENERIC_DCA_TEMPLATE,
-    );
+    await this.skillsService.upsertByName(GENERIC_DCA_TEMPLATE.name, GENERIC_DCA_TEMPLATE);
     seeded.push(GENERIC_DCA_TEMPLATE.name);
     return { seeded };
   }

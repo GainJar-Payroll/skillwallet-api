@@ -1,773 +1,2648 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SkillWallet Proof Harness</title>
-<style>
-  :root {
-    --color-bg: #0b0f10;
-    --color-bg-subtle: #101719;
-    --color-bg-muted: #172123;
-    --color-fg: #e4f7e8;
-    --color-fg-muted: #86a18e;
-    --color-fg-subtle: #5f7566;
-    --color-border: #223034;
-    --color-border-strong: #3ddc97;
-    --color-accent: #3ddc97;
-    --color-accent-fg: #07100b;
-    --color-danger: #ff6b6b;
-    --color-warning: #ffbc5e;
-    --color-success: #3ddc97;
-    --space-1: 4px;
-    --space-2: 8px;
-    --space-3: 12px;
-    --space-4: 16px;
-    --space-5: 20px;
-    --space-6: 24px;
-    --space-8: 32px;
-    --space-12: 48px;
-    --radius-sm: 4px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
-    --duration-fast: 100ms;
-    --duration-normal: 200ms;
-    color-scheme: dark;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; min-height: 100%; background: var(--color-bg); color: var(--color-fg); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.5; }
-  body { min-height: 100vh; }
-  button, input, select { font: inherit; }
-  .shell { min-height: 100vh; display: grid; grid-template-columns: 280px 1fr; }
-  .sidebar { border-right: 1px solid var(--color-border); background: var(--color-bg-subtle); padding: var(--space-6); position: sticky; top: 0; height: 100vh; overflow: auto; }
-  .brand { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-8); }
-  .eyebrow { color: var(--color-accent); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-  h1 { font-size: 24px; line-height: 1.2; margin: 0; letter-spacing: -0.015em; }
-  .lede { color: var(--color-fg-muted); margin: 0; }
-  .nav { display: flex; flex-direction: column; gap: var(--space-2); }
-  .nav a { color: var(--color-fg-muted); text-decoration: none; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); transition: background-color var(--duration-fast), color var(--duration-fast); }
-  .nav a:hover { background: var(--color-bg-muted); color: var(--color-fg); }
-  .nav a:focus-visible { outline: 2px solid var(--color-border-strong); outline-offset: 2px; }
-  .main { padding: var(--space-8); display: flex; flex-direction: column; gap: var(--space-6); max-width: 1180px; width: 100%; }
-  .hero { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-8); background: linear-gradient(135deg, var(--color-bg-subtle), var(--color-bg-muted)); display: grid; gap: var(--space-4); }
-  .hero h2 { font-size: 32px; line-height: 1.15; margin: 0; letter-spacing: -0.02em; max-width: 760px; }
-  .hero p { color: var(--color-fg-muted); margin: 0; max-width: 72ch; }
-  .cluster { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
-  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); }
-  .card { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-subtle); padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-4); }
-  .card h3 { margin: 0; font-size: 16px; letter-spacing: -0.01em; }
-  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
-  .badge { min-height: 32px; display: inline-flex; align-items: center; padding: 0 var(--space-3); border: 1px solid var(--color-border); border-radius: 9999px; color: var(--color-fg-muted); background: var(--color-bg); font-size: 12px; white-space: nowrap; }
-  .badge.ok { color: var(--color-success); border-color: var(--color-success); }
-  .badge.warn { color: var(--color-warning); border-color: var(--color-warning); }
-  .badge.fail { color: var(--color-danger); border-color: var(--color-danger); }
-  .btn { min-height: 40px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: var(--space-2) var(--space-4); background: var(--color-accent); color: var(--color-accent-fg); cursor: pointer; font-weight: 700; transition: transform var(--duration-fast), background-color var(--duration-fast), border-color var(--duration-fast); }
-  .btn:hover { background: var(--color-success); }
-  .btn:active { transform: scale(0.98); }
-  .btn:focus-visible { outline: 2px solid var(--color-border-strong); outline-offset: 2px; }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
-  .btn.secondary { background: transparent; color: var(--color-fg); border-color: var(--color-border); }
-  .btn.secondary:hover { background: var(--color-bg-muted); border-color: var(--color-border-strong); }
-  .btn.danger { background: transparent; color: var(--color-danger); border-color: var(--color-danger); }
-  .field { display: flex; flex-direction: column; gap: var(--space-2); }
-  .field label { color: var(--color-fg-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-  .field input, .field select { width: 100%; min-height: 40px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-fg); padding: var(--space-2) var(--space-3); }
-  .field input:hover, .field select:hover { border-color: var(--color-fg-subtle); }
-  .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--color-border-strong); outline-offset: 2px; }
-  .rows { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
-  .row { display: grid; grid-template-columns: 160px 1fr; gap: var(--space-4); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
-  .row:last-child { border-bottom: 0; }
-  .key { color: var(--color-fg-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-  .value { color: var(--color-fg); word-break: break-word; }
-  .timeline { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
-  .timeline li { display: grid; grid-template-columns: 20px 1fr; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); }
-  .dot { width: 12px; height: 12px; border-radius: 9999px; background: var(--color-fg-subtle); margin-top: var(--space-1); }
-  .dot.active { background: var(--color-warning); }
-  .dot.done { background: var(--color-success); }
-  .dot.err { background: var(--color-danger); }
-  .step-title { font-weight: 700; }
-  .step-meta { color: var(--color-fg-muted); font-size: 12px; }
-  pre { margin: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg); overflow: auto; white-space: pre-wrap; word-break: break-word; max-height: 360px; }
-  .hidden { display: none; }
-  .empty { color: var(--color-fg-muted); }
-  @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .sidebar { position: static; height: auto; } .grid { grid-template-columns: 1fr; } .main { padding: var(--space-4); } .row { grid-template-columns: 1fr; gap: var(--space-1); } }
-  @media (prefers-reduced-motion: reduce) { * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
-</style>
-</head>
-<body>
-<div class="shell">
-  <aside class="sidebar">
-    <div class="brand">
-      <span class="eyebrow">SkillWallet Proof</span>
-      <h1>Backend full-flow harness</h1>
-      <p class="lede">Connect MetaMask, create a MetaMask Smart Account signer, install a skill, trigger 1Shot, and inspect backend history.</p>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SkillWallet Proof — Stable MetaMask Flow</title>
+    <style>
+      :root {
+        --bg: #0b0f10;
+        --panel: #101719;
+        --panel2: #172123;
+        --fg: #e4f7e8;
+        --muted: #86a18e;
+        --subtle: #5f7566;
+        --border: #223034;
+        --accent: #3ddc97;
+        --accent-fg: #07100b;
+        --danger: #ff6b6b;
+        --warn: #ffbc5e;
+        --ok: #3ddc97;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.5 Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      .shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 300px 1fr;
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        overflow: auto;
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+        padding: 24px;
+      }
+
+      .main {
+        width: 100%;
+        max-width: 1240px;
+        padding: 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+        line-height: 1.2;
+      }
+
+      h2 {
+        font-size: 30px;
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+      }
+
+      h3 {
+        font-size: 16px;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .brand {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 28px;
+      }
+
+      .nav {
+        display: grid;
+        gap: 6px;
+      }
+
+      .nav a {
+        color: var(--muted);
+        text-decoration: none;
+        padding: 8px 10px;
+        border-radius: 8px;
+      }
+
+      .nav a:hover {
+        background: var(--panel2);
+        color: var(--fg);
+      }
+
+      .hero,
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+      }
+
+      .hero {
+        display: grid;
+        gap: 14px;
+        padding: 28px;
+        background: linear-gradient(135deg, var(--panel), var(--panel2));
+      }
+
+      .card {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 20px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+      }
+
+      .card-head,
+      .cluster {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .card-head {
+        justify-content: space-between;
+      }
+
+      .badge {
+        min-height: 28px;
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--bg);
+        color: var(--muted);
+        padding: 0 10px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .badge.ok {
+        color: var(--ok);
+        border-color: var(--ok);
+      }
+
+      .badge.warn {
+        color: var(--warn);
+        border-color: var(--warn);
+      }
+
+      .badge.fail {
+        color: var(--danger);
+        border-color: var(--danger);
+      }
+
+      .btn {
+        min-height: 40px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 8px 14px;
+        background: var(--accent);
+        color: var(--accent-fg);
+        cursor: pointer;
+        font-weight: 800;
+      }
+
+      .btn.secondary {
+        background: transparent;
+        color: var(--fg);
+        border-color: var(--border);
+      }
+
+      .btn.danger {
+        background: transparent;
+        color: var(--danger);
+        border-color: var(--danger);
+      }
+
+      .btn:disabled,
+      input:disabled,
+      select:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .field label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .field input,
+      .field select {
+        width: 100%;
+        min-height: 40px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg);
+        color: var(--fg);
+        padding: 8px 10px;
+      }
+
+      .rows {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 14px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .row:last-child {
+        border-bottom: 0;
+      }
+
+      .key {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .value {
+        word-break: break-word;
+      }
+
+      pre {
+        margin: 0;
+        max-height: 420px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg);
+        color: var(--fg);
+        padding: 14px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .empty {
+        color: var(--muted);
+      }
+
+      .timeline {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+
+      .timeline li {
+        display: grid;
+        grid-template-columns: 18px 1fr;
+        gap: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg);
+        padding: 10px;
+      }
+
+      .dot {
+        width: 11px;
+        height: 11px;
+        margin-top: 5px;
+        border-radius: 999px;
+        background: var(--subtle);
+      }
+
+      .dot.active {
+        background: var(--warn);
+      }
+
+      .dot.done {
+        background: var(--ok);
+      }
+
+      .dot.err {
+        background: var(--danger);
+      }
+
+      .step-title {
+        font-weight: 800;
+      }
+
+      .step-meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .spinner {
+        width: 13px;
+        height: 13px;
+        border: 2px solid rgba(7, 16, 11, 0.3);
+        border-top-color: var(--accent-fg);
+        border-radius: 999px;
+        display: inline-block;
+        vertical-align: -2px;
+        margin-right: 7px;
+        animation: spin 800ms linear infinite;
+      }
+
+      .btn.secondary .spinner,
+      .btn.danger .spinner {
+        border-color: rgba(228, 247, 232, 0.25);
+        border-top-color: var(--fg);
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (max-width: 920px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          position: static;
+          height: auto;
+        }
+
+        .main {
+          padding: 18px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="eyebrow">SkillWallet Proof</span>
+          <h1>Hybrid SA + FunctionCall delegation</h1>
+          <p class="muted">
+            Race-tolerant version: adopts current selected MetaMask account at action start.
+          </p>
+        </div>
+
+        <nav class="nav">
+          <a href="#wallet">Wallet + Hybrid SA</a>
+          <a href="#catalog">Skills</a>
+          <a href="#prepare">Prepare + Sign</a>
+          <a href="#install">Grant + Run</a>
+          <a href="#history">History</a>
+          <a href="#logs">Logs</a>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <section class="hero">
+          <div class="eyebrow">
+            Base Sepolia · Hybrid Smart Account · Bundler/Paymaster deploy · 1Shot runtime
+          </div>
+          <h2>Stable proof harness for the MVP install/run flow.</h2>
+          <p class="muted">
+            Important: account permission popup is only opened by Connect MetaMask. Create/Deploy
+            never auto-request account permission, preventing wallet_requestPermissions pending
+            loops.
+          </p>
+
+          <div class="cluster">
+            <button class="btn" id="runAllBtn" type="button">Run full flow</button>
+            <button class="btn secondary" id="resetBtn" type="button">Reset UI</button>
+            <span class="badge" id="globalStatus">Idle</span>
+          </div>
+        </section>
+
+        <section class="grid" id="wallet">
+          <div class="card">
+            <div class="card-head">
+              <h3>Wallet and Hybrid Smart Account</h3>
+              <span class="badge" id="walletStatus">Disconnected</span>
+            </div>
+
+            <div class="cluster">
+              <button class="btn" id="connectBtn" type="button">Connect MetaMask</button>
+              <button class="btn secondary" id="smartBtn" type="button">Create Hybrid SA</button>
+              <button class="btn secondary" id="deploySmartBtn" type="button">
+                Deploy Hybrid SA
+              </button>
+            </div>
+
+            <div class="field">
+              <label for="deploySaltInput">Fixed deploy salt bytes32</label>
+              <input
+                id="deploySaltInput"
+                value="0x0000000000000000000000000000000000000000000000000000000000000888"
+              />
+            </div>
+
+            <div class="rows">
+              <div class="row">
+                <span class="key">EOA</span><span class="value" id="accountValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Chain</span><span class="value" id="chainValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Smart account</span><span class="value" id="smartValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Deployment</span><span class="value" id="deployValue">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>Bundler / paymaster deploy config</h3>
+              <span class="badge" id="deployStatus">Not deployed</span>
+            </div>
+
+            <div class="field">
+              <label for="bundlerUrlInput">Bundler URL</label>
+              <input
+                id="bundlerUrlInput"
+                placeholder="https://api.pimlico.io/v2/84532/rpc?apikey=..."
+                value="https://api.pimlico.io/v2/84532/rpc?apikey=pim_6nVf8zJFiq6mdBjgPTHCFf"
+              />
+            </div>
+
+            <div class="field">
+              <label for="paymasterUrlInput">Paymaster URL</label>
+              <input id="paymasterUrlInput" placeholder="usually same as bundler URL" value="https://api.pimlico.io/v2/84532/rpc?apikey=pim_6nVf8zJFiq6mdBjgPTHCFf" />
+            </div>
+
+            <div class="field">
+              <label for="sponsorshipPolicyInput">Sponsorship policy ID</label>
+              <input id="sponsorshipPolicyInput" placeholder="sp_..." value="sp_milky_cassandra_nova" />
+            </div>
+
+            <p class="muted">
+              Deploy only uses bundler/paymaster. DCA runtime still goes through backend → 1Shot.
+            </p>
+          </div>
+        </section>
+
+        <section class="grid" id="catalog">
+          <div class="card">
+            <div class="card-head">
+              <h3>Skills catalog</h3>
+              <span class="badge" id="skillsStatus">Not loaded</span>
+            </div>
+
+            <div class="field">
+              <label for="adminKeyInput">Admin API key</label>
+              <input
+                id="adminKeyInput"
+                type="password"
+                autocomplete="off"
+                placeholder="ADMIN_API_KEY"
+              />
+            </div>
+
+            <div class="cluster">
+              <button class="btn secondary" id="seedBtn" type="button">Seed skills</button>
+              <button class="btn" id="loadSkillsBtn" type="button">Load skills</button>
+              <button class="btn secondary" id="loadExecutorBtn" type="button">
+                Load executor
+              </button>
+            </div>
+
+            <div class="field">
+              <label for="skillSelect">Skill</label>
+              <select id="skillSelect"></select>
+            </div>
+
+            <div class="rows">
+              <div class="row">
+                <span class="key">Executor</span><span class="value" id="executorValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Selected</span>
+                <span class="value" id="selectedSkillValue">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>DCA config</h3>
+              <span class="badge">Base Sepolia MVP</span>
+            </div>
+
+            <div class="field">
+              <label for="amountInput">Amount in USDC atoms</label>
+              <input id="amountInput" inputmode="numeric" value="100000" />
+            </div>
+
+            <div class="field">
+              <label for="frequencyInput">Frequency</label>
+              <select id="frequencyInput">
+                <option value="daily" selected>daily</option>
+                <option value="weekly">weekly</option>
+                <option value="monthly">monthly</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="feeTierInput">Uniswap V3 fee tier</label>
+              <select id="feeTierInput">
+                <option value="500">500</option>
+                <option value="3000" selected>3000</option>
+                <option value="10000">10000</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="slippageInput">Max slippage bps</label>
+              <input id="slippageInput" inputmode="numeric" value="50" />
+            </div>
+          </div>
+        </section>
+
+        <section class="grid" id="prepare">
+          <div class="card">
+            <div class="card-head">
+              <h3>Prepare and sign FunctionCall delegation</h3>
+              <span class="badge" id="delegationStatus">Waiting</span>
+            </div>
+
+            <div class="cluster">
+              <button class="btn secondary" id="prepareBtn" type="button">Prepare</button>
+              <button class="btn" id="signBtn" type="button">Sign delegation</button>
+            </div>
+
+            <div class="rows">
+              <div class="row">
+                <span class="key">Prepare ID</span><span class="value" id="prepareValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Delegate</span><span class="value" id="delegateValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Signature</span><span class="value" id="signatureValue">—</span>
+              </div>
+            </div>
+
+            <pre id="prepareOutput" class="empty">No prepare result yet.</pre>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>Timeline</h3>
+              <span class="badge" id="timelineStatus">Ready</span>
+            </div>
+
+            <ol class="timeline">
+              <li>
+                <span class="dot" data-dot="connect"></span>
+                <div>
+                  <div class="step-title">Connect MetaMask</div>
+                  <div class="step-meta" data-step="connect">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="smart"></span>
+                <div>
+                  <div class="step-title">Create Hybrid SA</div>
+                  <div class="step-meta" data-step="smart">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="deploy"></span>
+                <div>
+                  <div class="step-title">Deploy Hybrid SA</div>
+                  <div class="step-meta" data-step="deploy">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="skills"></span>
+                <div>
+                  <div class="step-title">Load skills</div>
+                  <div class="step-meta" data-step="skills">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="prepare"></span>
+                <div>
+                  <div class="step-title">Prepare</div>
+                  <div class="step-meta" data-step="prepare">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="sign"></span>
+                <div>
+                  <div class="step-title">Sign delegation</div>
+                  <div class="step-meta" data-step="sign">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="grant"></span>
+                <div>
+                  <div class="step-title">Grant</div>
+                  <div class="step-meta" data-step="grant">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="run"></span>
+                <div>
+                  <div class="step-title">Run via 1Shot</div>
+                  <div class="step-meta" data-step="run">Not started</div>
+                </div>
+              </li>
+              <li>
+                <span class="dot" data-dot="attempt"></span>
+                <div>
+                  <div class="step-title">Read attempt</div>
+                  <div class="step-meta" data-step="attempt">Not started</div>
+                </div>
+              </li>
+            </ol>
+          </div>
+        </section>
+
+        <section class="grid" id="install">
+          <div class="card">
+            <div class="card-head">
+              <h3>Grant installation</h3>
+              <span class="badge" id="installStatus">Waiting</span>
+            </div>
+
+            <button class="btn" id="grantBtn" type="button">POST /installations/grant</button>
+
+            <div class="rows">
+              <div class="row">
+                <span class="key">Installation</span>
+                <span class="value" id="installationValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Status</span>
+                <span class="value" id="installationStatusValue">—</span>
+              </div>
+            </div>
+
+            <pre id="grantOutput" class="empty">No grant result yet.</pre>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>Run installation</h3>
+              <span class="badge" id="runStatus">Waiting</span>
+            </div>
+
+            <div class="cluster">
+              <button class="btn" id="runBtn" type="button">
+                POST /runtime/run/:installationId
+              </button>
+              <button class="btn secondary" id="refreshAttemptBtn" type="button">
+                Refresh attempt
+              </button>
+            </div>
+
+            <div class="rows">
+              <div class="row">
+                <span class="key">Attempt</span><span class="value" id="attemptValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Task</span><span class="value" id="taskValue">—</span>
+              </div>
+              <div class="row">
+                <span class="key">Tx</span><span class="value" id="hashValue">—</span>
+              </div>
+            </div>
+
+            <pre id="runOutput" class="empty">No runtime result yet.</pre>
+          </div>
+        </section>
+
+        <section class="card" id="history">
+          <div class="card-head">
+            <h3>History</h3>
+            <span class="badge" id="historyStatus">No attempt</span>
+          </div>
+
+          <div class="cluster">
+            <button class="btn secondary" id="fetchInstallationBtn" type="button">
+              Fetch installation
+            </button>
+            <button class="btn secondary" id="fetchMyInstallationsBtn" type="button">
+              Fetch my installations
+            </button>
+          </div>
+
+          <pre id="historyOutput" class="empty">No history yet.</pre>
+        </section>
+
+        <section class="card" id="logs">
+          <div class="card-head">
+            <h3>Raw logs</h3>
+            <div class="cluster">
+              <button class="btn secondary" id="copyLogsBtn" type="button">Copy logs</button>
+              <button class="btn secondary" id="copyStateBtn" type="button">Copy state</button>
+              <span class="badge" id="logStatus">Live</span>
+            </div>
+          </div>
+
+          <pre id="logOutput" class="empty">Waiting for actions.</pre>
+        </section>
+      </main>
     </div>
-    <nav class="nav" aria-label="Proof sections">
-      <a href="#wallet">Wallet</a>
-      <a href="#skills">Skills</a>
-      <a href="#install">Install skill</a>
-      <a href="#run">Run skill</a>
-      <a href="#history">History</a>
-      <a href="#logs">Logs</a>
-    </nav>
-  </aside>
-  <main class="main">
-    <section class="hero">
-      <div class="eyebrow">Base Sepolia · MetaMask · Smart Accounts Kit · 1Shot</div>
-      <h2>Prove the backend works end-to-end before the real frontend exists.</h2>
-      <p>This page is a local testing console. It calls the same NestJS endpoints a production frontend would call, while the browser signs the delegation with MetaMask Smart Accounts Kit.</p>
-      <div class="cluster">
-        <button class="btn" id="runAllBtn" type="button">Run full flow</button>
-        <button class="btn secondary" id="resetBtn" type="button">Reset UI</button>
-        <span class="badge" id="globalStatus">Idle</span>
-      </div>
-    </section>
 
-    <section class="grid">
-      <div class="card" id="wallet">
-        <div class="card-head">
-          <h3>Wallet and smart account</h3>
-          <span class="badge" id="walletStatus">Disconnected</span>
-        </div>
-        <div class="cluster">
-          <button class="btn" id="connectBtn" type="button">Connect MetaMask</button>
-          <button class="btn secondary" id="smartBtn" type="button">Create smart account</button>
-          <button class="btn secondary" id="deploySmartBtn" type="button">Deploy smart account</button>
-        </div>
-        <div class="field">
-          <label for="deploySaltInput">Hybrid deploy salt</label>
-          <input id="deploySaltInput" disabled type="text" value="0x888" placeholder="0x or 0x-prefixed custom salt" />
-        </div>
-        <div class="rows">
-          <div class="row"><span class="key">EOA</span><span class="value" id="accountValue">—</span></div>
-          <div class="row"><span class="key">Chain</span><span class="value" id="chainValue">—</span></div>
-          <div class="row"><span class="key">Smart account</span><span class="value" id="smartValue">—</span></div>
-          <div class="row"><span class="key">Deployment</span><span class="value" id="deployValue">—</span></div>
-          <div class="row"><span class="key">Executor</span><span class="value" id="executorValue">—</span></div>
-        </div>
-      </div>
+    <script type="module">
+      const BASE_SEPOLIA_ID = 84532;
+      const BASE_SEPOLIA_HEX = '0x14a34';
 
-      <div class="card" id="skills">
-        <div class="card-head">
-          <h3>Skills catalog</h3>
-          <span class="badge" id="skillsStatus">Not loaded</span>
-        </div>
-        <div class="field">
-          <label for="adminKeyInput">Admin API key for seed and trigger</label>
-          <input id="adminKeyInput" type="password" autocomplete="off" placeholder="test-admin-key or deployed admin key" />
-        </div>
-        <div class="cluster">
-          <button class="btn secondary" id="seedBtn" type="button">Seed skills</button>
-          <button class="btn" id="loadSkillsBtn" type="button">Load skills</button>
-        </div>
-        <div class="field">
-          <label for="skillSelect">Skill</label>
-          <select id="skillSelect"></select>
-        </div>
-      </div>
-    </section>
+      const BASE_SEPOLIA = {
+        chainId: BASE_SEPOLIA_HEX,
+        chainName: 'Base Sepolia',
+        nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
+        rpcUrls: ['https://sepolia.base.org'],
+        blockExplorerUrls: ['https://sepolia.basescan.org'],
+      };
 
-    <section class="grid" id="install">
-      <div class="card">
-        <div class="card-head">
-          <h3>Prepare and sign delegation</h3>
-          <span class="badge" id="delegationStatus">Waiting</span>
-        </div>
-        <div class="cluster">
-          <button class="btn secondary" id="prepareBtn" type="button">Prepare delegation</button>
-          <button class="btn" id="signBtn" type="button">Sign delegation</button>
-        </div>
-        <div class="rows">
-          <div class="row"><span class="key">Salt</span><span class="value" id="saltValue">—</span></div>
-          <div class="row"><span class="key">Delegate</span><span class="value" id="delegateValue">—</span></div>
-          <div class="row"><span class="key">Signature</span><span class="value" id="signatureValue">—</span></div>
-        </div>
-      </div>
+      const ADDRS = {
+        usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+        weth: '0x4200000000000000000000000000000000000006',
+        swapRouter02: '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4',
+      };
 
-      <div class="card">
-        <div class="card-head">
-          <h3>Confirm installation</h3>
-          <span class="badge" id="installStatus">Waiting</span>
-        </div>
-        <div class="field">
-          <label for="amountInput">Amount USDC atoms</label>
-          <input id="amountInput" inputmode="numeric" value="10000000" />
-        </div>
-        <div class="field">
-          <label for="outputInput">Output token</label>
-          <select id="outputInput"><option value="weth">weth</option><option value="cbBtc">cbBtc</option></select>
-        </div>
-        <button class="btn" id="confirmBtn" type="button">Confirm installation</button>
-        <div class="rows">
-          <div class="row"><span class="key">Installation</span><span class="value" id="installationValue">—</span></div>
-          <div class="row"><span class="key">Status</span><span class="value" id="installationStatusValue">—</span></div>
-        </div>
-      </div>
-    </section>
+      const DEFAULT_SKILL_ID = 'direct-router-dca';
 
-    <section class="grid" id="run">
-      <div class="card">
-        <div class="card-head">
-          <h3>Force-run skill</h3>
-          <span class="badge" id="runStatus">Waiting</span>
-        </div>
-        <div class="cluster">
-          <button class="btn" id="triggerBtn" type="button">Trigger execution</button>
-          <button class="btn secondary" id="refreshBtn" type="button">Refresh history</button>
-        </div>
-        <div class="cluster">
-          <button class="btn secondary" id="pauseBtn" type="button">Pause</button>
-          <button class="btn secondary" id="resumeBtn" type="button">Resume</button>
-          <button class="btn danger" id="revokeBtn" type="button">Revoke</button>
-        </div>
-        <div class="rows">
-          <div class="row"><span class="key">Latest task</span><span class="value" id="taskValue">—</span></div>
-          <div class="row"><span class="key">Latest tx</span><span class="value" id="hashValue">—</span></div>
-        </div>
-      </div>
+      const state = {
+        provider: null,
+        walletClient: null,
+        publicClient: null,
+        smartAccount: null,
+        smartAccountAddress: '',
+        smartAccountDeployed: false,
 
-      <div class="card">
-        <div class="card-head">
-          <h3>Flow timeline</h3>
-          <span class="badge" id="timelineStatus">Ready</span>
-        </div>
-        <ol class="timeline" id="timeline">
-          <li><span class="dot" data-dot="connect"></span><div><div class="step-title">Connect MetaMask</div><div class="step-meta" data-step="connect">Not started</div></div></li>
-          <li><span class="dot" data-dot="smart"></span><div><div class="step-title">Create smart account signer</div><div class="step-meta" data-step="smart">Not started</div></div></li>
-          <li><span class="dot" data-dot="skills"></span><div><div class="step-title">Load backend skills</div><div class="step-meta" data-step="skills">Not started</div></div></li>
-          <li><span class="dot" data-dot="prepare"></span><div><div class="step-title">Prepare delegation</div><div class="step-meta" data-step="prepare">Not started</div></div></li>
-          <li><span class="dot" data-dot="sign"></span><div><div class="step-title">Sign delegation</div><div class="step-meta" data-step="sign">Not started</div></div></li>
-          <li><span class="dot" data-dot="confirm"></span><div><div class="step-title">Confirm installation</div><div class="step-meta" data-step="confirm">Not started</div></div></li>
-          <li><span class="dot" data-dot="trigger"></span><div><div class="step-title">Trigger 1Shot execution</div><div class="step-meta" data-step="trigger">Not started</div></div></li>
-          <li><span class="dot" data-dot="history"></span><div><div class="step-title">Read execution history</div><div class="step-meta" data-step="history">Not started</div></div></li>
-        </ol>
-      </div>
-    </section>
+        account: '',
+        chainId: '',
 
-    <section class="card" id="history">
-      <div class="card-head">
-        <h3>Installation history</h3>
-        <span class="badge" id="historyStatus">No installation</span>
-      </div>
-      <pre id="historyOutput" class="empty">No history yet.</pre>
-    </section>
+        skills: [],
+        selectedSkill: null,
+        executor: null,
+        prepared: null,
+        delegation: null,
+        signedDelegation: null,
+        installation: null,
+        attempt: null,
 
-    <section class="card" id="logs">
-      <div class="card-head">
-        <h3>Raw logs</h3>
-        <span class="badge" id="logStatus">Live</span>
-      </div>
-      <pre id="logOutput" class="empty">Waiting for actions.</pre>
-    </section>
-  </main>
-</div>
-<script type="module">
-const state = {
-  provider: null,
-  walletClient: null,
-  publicClient: null,
-  smartAccount: null,
-  smartAccountAddress: '',
-  smartAccountDeployed: false,
-  account: '',
-  chainId: '',
-  skills: [],
-  selectedSkill: null,
-  prepared: null,
-  signedDelegation: null,
-  installation: null,
-  libs: null
-};
-const apiBase = '';
-const BASE_SEPOLIA = {
-  chainId: '0x14a34',
-  chainName: 'Base Sepolia',
-  nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: ['https://sepolia.base.org'],
-  blockExplorerUrls: ['https://sepolia.basescan.org']
-};
-const BASE_SEPOLIA_ID = 84532;
-const el = (id) => document.getElementById(id);
-function setBadge(id, text, kind) {
-  const node = el(id);
-  if (!node) return;
-  node.textContent = text;
-  node.className = 'badge' + (kind ? ' ' + kind : '');
-}
-function setText(id, text) {
-  const node = el(id);
-  if (node) node.textContent = text || '—';
-}
-function step(name, kind, meta) {
-  const dot = document.querySelector('[data-dot="' + name + '"]');
-  const label = document.querySelector('[data-step="' + name + '"]');
-  if (dot) dot.className = 'dot' + (kind ? ' ' + kind : '');
-  if (label) label.textContent = meta;
-}
-function log(message, data) {
-  const out = el('logOutput');
-  if (!out) return;
-  const time = new Date().toISOString();
-  const payload = data === undefined ? '' : '\n' + JSON.stringify(data, (_key, value) => typeof value === 'bigint' ? value.toString() : value, 2);
-  out.classList.remove('empty');
-  out.textContent = '[' + time + '] ' + message + payload + '\n\n' + (out.textContent === 'Waiting for actions.' ? '' : out.textContent);
-  console.debug('[SkillWallet Proof]', message, data);
-}
-function adminHeaders() {
-  const key = el('adminKeyInput').value.trim();
-  return key ? { 'x-api-key': key } : {};
-}
-async function requestJson(url, options) {
-  const init = options || {};
-  const headers = Object.assign({ 'content-type': 'application/json' }, init.headers || {});
-  const res = await fetch(url, Object.assign({}, init, { headers }));
-  const text = await res.text();
-  let body = {};
-  if (text) {
-    try { body = JSON.parse(text); } catch { body = { raw: text }; }
-  }
-  if (!res.ok) {
-    const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-    throw new Error(message || body.error || body.raw || 'HTTP ' + res.status);
-  }
-  return body;
-}
-function api(path, options) {
-  return requestJson(apiBase + path, options);
-}
-async function loadLibraries() {
-  if (state.libs) return state.libs;
-  log('Loading browser ESM libraries');
-  const [smartKit, viem, chains, accountAbstraction] = await Promise.all([
-    import('https://esm.sh/@metamask/smart-accounts-kit@latest'),
-    import('https://esm.sh/viem@2.52.2'),
-    import('https://esm.sh/viem@2.52.2/chains'),
-    import('https://esm.sh/viem@2.52.2/account-abstraction')
-  ]);
-  state.libs = { smartKit, viem, chains, accountAbstraction };
-  return state.libs;
-}
-function getInjectedProvider() {
-  const ethereum = window.ethereum;
-  if (!ethereum) return null;
-  if (Array.isArray(ethereum.providers)) {
-    return ethereum.providers.find((provider) => provider.isMetaMask) || ethereum.providers[0];
-  }
-  return ethereum;
-}
-async function ensureBaseSepolia() {
-  const current = await state.provider.request({ method: 'eth_chainId' });
-  if (current === BASE_SEPOLIA.chainId) {
-    state.chainId = current;
-    setText('chainValue', 'Base Sepolia (' + current + ')');
-    return;
-  }
-  try {
-    await state.provider.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: BASE_SEPOLIA.chainId }]
-    });
-  } catch (err) {
-    if (err.code !== 4902) throw err;
-    await state.provider.request({
-      method: 'wallet_addEthereumChain',
-      params: [BASE_SEPOLIA]
-    });
-  }
-  state.chainId = await state.provider.request({ method: 'eth_chainId' });
-  setText('chainValue', 'Base Sepolia (' + state.chainId + ')');
-}
-async function connectWallet() {
-  step('connect', 'active', 'Requesting MetaMask connection');
-  setBadge('walletStatus', 'Connecting', 'warn');
-  const provider = getInjectedProvider();
-  if (!provider) {
-    setBadge('walletStatus', 'No MetaMask', 'fail');
-    throw new Error('MetaMask injected provider not found. Install MetaMask or open this page in a MetaMask-enabled browser.');
-  }
-  state.provider = provider;
-  const accounts = await provider.request({ method: 'eth_requestAccounts' });
-  state.account = accounts?.[0] || '';
-  if (!state.account) throw new Error('MetaMask returned no accounts');
-  await ensureBaseSepolia();
-  setText('accountValue', state.account);
-  setBadge('walletStatus', 'Connected', 'ok');
-  step('connect', 'done', state.account);
-  log('Connected wallet', { account: state.account, chainId: state.chainId });
-}
-function getDeploySalt() {
-  const value = el('deploySaltInput').value.trim() || '0x';
-  if (!/^0x[0-9a-fA-F]*$/.test(value)) {
-    throw new Error('Deploy salt must be 0x-prefixed hex');
-  }
-  return value;
-}
-async function checkSmartAccountDeployment() {
-  if (!state.smartAccountAddress) await createSmartAccount();
-  const libs = await loadLibraries();
-  if (!state.publicClient) {
-    state.publicClient = libs.viem.createPublicClient({
-      chain: libs.chains.baseSepolia,
-      transport: libs.viem.http(BASE_SEPOLIA.rpcUrls[0])
-    });
-  }
-  const code = await state.publicClient.getCode({ address: state.smartAccountAddress });
-  state.smartAccountDeployed = Boolean(code && code !== '0x');
-  setText('deployValue', state.smartAccountDeployed ? 'Deployed' : 'Not deployed');
-  log('Checked Hybrid smart account deployment', {
-    address: state.smartAccountAddress,
-    code,
-    deployed: state.smartAccountDeployed
-  });
-  return { address: state.smartAccountAddress, code, deployed: state.smartAccountDeployed };
-}
-async function createSmartAccount() {
-  if (!state.account) await connectWallet();
-  await ensureBaseSepolia();
-  step('smart', 'active', 'Creating Hybrid smart account');
-  setBadge('walletStatus', 'Loading smart kit', 'warn');
-  const libs = await loadLibraries();
-  const baseSepolia = libs.chains.baseSepolia;
-  const deploySalt = getDeploySalt();
-  state.walletClient = libs.viem.createWalletClient({
-    account: state.account,
-    chain: baseSepolia,
-    transport: libs.viem.custom(state.provider)
-  });
-  state.publicClient = libs.viem.createPublicClient({
-    chain: baseSepolia,
-    transport: libs.viem.http(BASE_SEPOLIA.rpcUrls[0])
-  });
-  state.smartAccount = await libs.smartKit.toMetaMaskSmartAccount({
-    client: state.publicClient,
-    implementation: libs.smartKit.Implementation.Hybrid,
-    deployParams: [state.account, [], [], []],
-    deploySalt,
-    signer: { walletClient: state.walletClient }
-  });
-  const address = state.smartAccount.address || (await state.smartAccount.getAddress?.()) || '';
-  state.smartAccountAddress = address;
-  setText('smartValue', address);
-  setBadge('walletStatus', 'Hybrid smart account ready', 'ok');
-  step('smart', 'done', address);
-  log('Created MetaMask Hybrid smart account signer', { address, deploySalt, implementation: 'Hybrid' });
-  await checkSmartAccountDeployment();
-}
-async function getBundlerGasPrice() {
-  const response = await requestJson('/proof/bundler-rpc', {
-    method: 'POST',
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'pimlico_getUserOperationGasPrice',
-      params: []
-    })
-  });
-  if (response.error) {
-    throw new Error(response.error.message || 'Failed to read Pimlico gas price');
-  }
-  const fast = response.result?.fast;
-  if (!fast?.maxFeePerGas || !fast?.maxPriorityFeePerGas) {
-    throw new Error('Pimlico gas price response missing fast fee tier');
-  }
-  return {
-    maxFeePerGas: BigInt(fast.maxFeePerGas),
-    maxPriorityFeePerGas: BigInt(fast.maxPriorityFeePerGas)
-  };
-}
-async function deploySmartAccount() {
-  if (!state.smartAccount) await createSmartAccount();
-  await checkSmartAccountDeployment();
-  if (state.smartAccountDeployed) {
-    setBadge('walletStatus', 'Already deployed', 'ok');
-    return { deployed: true, address: state.smartAccountAddress };
-  }
-  const libs = await loadLibraries();
-  setBadge('walletStatus', 'Deploying via Pimlico', 'warn');
-  setText('deployValue', 'Sending first UserOperation');
-  const bundlerClient = libs.accountAbstraction.createBundlerClient({
-    client: state.publicClient,
-    transport: libs.viem.http('/proof/bundler-rpc')
-  });
-  const gasPrice = await getBundlerGasPrice();
-  const userOperationHash = await bundlerClient.sendUserOperation({
-    account: state.smartAccount,
-    calls: [
-      {
-        to: state.smartAccountAddress,
-        value: 0n,
-        data: '0x'
+        libs: null,
+
+        busy: false,
+        activeAction: '',
+
+        providerEventsBound: false,
+
+        switchingChain: false,
+        targetChainId: BASE_SEPOLIA_HEX,
+        lastChainChangedAt: 0,
+        lastChainChangedValue: '',
+        chainSettlePromise: null,
+      };
+
+      const debugLogs = [];
+      const el = (id) => document.getElementById(id);
+
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
       }
-    ],
-    maxFeePerGas: gasPrice.maxFeePerGas,
-    maxPriorityFeePerGas: gasPrice.maxPriorityFeePerGas
-  });
-  setText('deployValue', 'UserOp sent: ' + userOperationHash);
-  log('Sent Hybrid deploy UserOperation through Pimlico', {
-    address: state.smartAccountAddress,
-    chainId: BASE_SEPOLIA_ID,
-    userOperationHash
-  });
-  await waitForUserOperationReceipt(bundlerClient, userOperationHash);
-  return checkSmartAccountDeployment();
-}
-async function waitForUserOperationReceipt(bundlerClient, userOperationHash) {
-  for (let attempt = 1; attempt <= 30; attempt += 1) {
-    const receipt = await bundlerClient.getUserOperationReceipt({ hash: userOperationHash });
-    if (receipt) {
-      setText('deployValue', receipt.receipt?.transactionHash || userOperationHash);
-      log('Hybrid deploy UserOperation included', receipt);
-      return receipt;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  throw new Error('Timed out waiting for Pimlico UserOperation receipt');
-}
-async function loadExecutor() {
-  const data = await api('/executor/address');
-  setText('executorValue', data.address);
-  log('Loaded executor', data);
-  return data;
-}
-async function seedSkills() {
-  setBadge('skillsStatus', 'Seeding', 'warn');
-  const data = await api('/admin/skills/seed', { method: 'POST', headers: adminHeaders(), body: '{}' });
-  setBadge('skillsStatus', 'Seeded', 'ok');
-  log('Seeded skills', data);
-  await loadSkills();
-}
-async function loadSkills() {
-  step('skills', 'active', 'Fetching /skills');
-  setBadge('skillsStatus', 'Loading', 'warn');
-  const body = await api('/skills');
-  state.skills = body.data || [];
-  const select = el('skillSelect');
-  select.innerHTML = '';
-  if (!state.skills.length) {
-    state.selectedSkill = null;
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'No active skills. Enter admin key and click Seed Built-ins.';
-    select.appendChild(option);
-    setBadge('skillsStatus', 'Empty', 'warn');
-    step('skills', 'active', 'No active skills found');
-    log('No active skills returned from /skills', body);
-    return;
-  }
-  for (const skill of state.skills) {
-    const option = document.createElement('option');
-    option.value = skill._id;
-    option.textContent = skill.name + ' · chain ' + skill.chainId;
-    select.appendChild(option);
-  }
-  state.selectedSkill = state.skills[0];
-  select.value = state.selectedSkill._id;
-  select.onchange = () => {
-    state.selectedSkill = state.skills.find((skill) => skill._id === select.value) || null;
-    log('Selected skill', state.selectedSkill);
-  };
-  setBadge('skillsStatus', state.skills.length + ' loaded', 'ok');
-  step('skills', 'done', state.skills.length + ' skills loaded');
-  log('Loaded skills', state.skills);
-}
-async function prepareDelegation() {
-  if (!state.account) await connectWallet();
-  if (!state.smartAccount) await createSmartAccount();
-  if (!state.selectedSkill) await loadSkills();
-  if (!state.selectedSkill) throw new Error('No skill selected. Seed or load an active skill first.');
-  step('prepare', 'active', 'Calling /installations/prepare');
-  setBadge('delegationStatus', 'Preparing', 'warn');
-  state.prepared = await api('/installations/prepare', {
-    method: 'POST',
-    body: JSON.stringify({ skillId: state.selectedSkill._id, userAddress: state.account })
-  });
-  setText('saltValue', state.prepared.salt);
-  setText('delegateValue', state.prepared.delegation.delegate);
-  step('prepare', 'done', state.prepared.salt);
-  setBadge('delegationStatus', 'Prepared', 'ok');
-  log('Prepared delegation', state.prepared);
-}
-async function signDelegation() {
-  if (!state.prepared) await prepareDelegation();
-  step('sign', 'active', 'Requesting delegation signature');
-  setBadge('delegationStatus', 'Signing', 'warn');
-  const signed = await state.smartAccount.signDelegation({ delegation: state.prepared.delegation });
-  state.signedDelegation = typeof signed === 'string'
-    ? Object.assign({}, state.prepared.delegation, { signature: signed })
-    : signed;
-  const signature = state.signedDelegation.signature || '';
-  setText('signatureValue', signature);
-  step('sign', 'done', signature ? signature.slice(0, 18) + '…' : 'Signed');
-  setBadge('delegationStatus', 'Signed', 'ok');
-  log('Signed delegation', state.signedDelegation);
-}
-async function confirmInstallation() {
-  if (!state.signedDelegation) await signDelegation();
-  step('confirm', 'active', 'Calling /installations/confirm');
-  setBadge('installStatus', 'Confirming', 'warn');
-  state.installation = await api('/installations/confirm', {
-    method: 'POST',
-    body: JSON.stringify({
-      skillId: state.selectedSkill._id,
-      userAddress: state.account,
-      delegationSalt: state.prepared.salt,
-      signedDelegation: state.signedDelegation,
-      parameters: {
-        amountUsdc: el('amountInput').value.trim() || '10000000',
-        outputToken: el('outputInput').value
+
+      function safeStringify(value, space = 2) {
+        try {
+          return JSON.stringify(
+            value,
+            (_k, v) => {
+              if (typeof v === 'bigint') return v.toString();
+
+              if (v instanceof Error) {
+                return {
+                  name: v.name,
+                  message: v.message,
+                  stack: v.stack,
+                  code: v.code,
+                  data: v.data,
+                  cause: v.cause,
+                  details: v.details,
+                  shortMessage: v.shortMessage,
+                  metaMessages: v.metaMessages,
+                  docsPath: v.docsPath,
+                };
+              }
+
+              if (typeof v === 'function') return `[Function ${v.name || 'anonymous'}]`;
+
+              return v;
+            },
+            space,
+          );
+        } catch {
+          return String(value);
+        }
       }
-    })
-  });
-  setText('installationValue', state.installation._id);
-  setText('installationStatusValue', state.installation.status);
-  setBadge('installStatus', 'Installed', 'ok');
-  step('confirm', 'done', state.installation._id);
-  log('Confirmed installation', state.installation);
-  await refreshHistory();
-}
-async function triggerExecution() {
-  if (!state.installation) await confirmInstallation();
-  step('trigger', 'active', 'Calling /admin/installations/:id/trigger');
-  setBadge('runStatus', 'Triggering', 'warn');
-  const data = await api('/admin/installations/' + state.installation._id + '/trigger', {
-    method: 'POST',
-    headers: adminHeaders(),
-    body: '{}'
-  });
-  setBadge('runStatus', 'Triggered', 'ok');
-  step('trigger', 'done', data.message);
-  log('Triggered execution', data);
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-  await refreshHistory();
-}
-async function refreshHistory() {
-  if (!state.installation) throw new Error('No installation selected');
-  step('history', 'active', 'Fetching installation history');
-  const data = await api('/installations/' + state.installation._id);
-  state.installation = data;
-  setText('installationStatusValue', data.status);
-  const executions = data.executions || [];
-  const latest = executions[0] || {};
-  setText('taskValue', latest.oneShotTaskId || '—');
-  setText('hashValue', latest.txHash || '—');
-  el('historyOutput').classList.remove('empty');
-  el('historyOutput').textContent = JSON.stringify(data, null, 2);
-  setBadge('historyStatus', executions.length + ' executions', executions.length ? 'ok' : 'warn');
-  step('history', 'done', executions.length + ' executions found');
-  log('Refreshed history', data);
-}
-async function setInstallationStatus(action) {
-  if (!state.installation) throw new Error('No installation selected');
-  let path = '/installations/' + state.installation._id;
-  let method = 'PATCH';
-  if (action === 'pause') path += '/pause';
-  if (action === 'resume') path += '/resume';
-  if (action === 'revoke') method = 'DELETE';
-  const data = await api(path, {
-    method,
-    body: JSON.stringify({ userAddress: state.account })
-  });
-  log('Updated installation status: ' + action, data);
-  await refreshHistory();
-}
-async function runFullFlow() {
-  setBadge('globalStatus', 'Running', 'warn');
-  try {
-    await connectWallet();
-    await createSmartAccount();
-    await loadExecutor();
-    await loadSkills();
-    await prepareDelegation();
-    await signDelegation();
-    await confirmInstallation();
-    await triggerExecution();
-    setBadge('globalStatus', 'Complete', 'ok');
-  } catch (err) {
-    setBadge('globalStatus', 'Failed', 'fail');
-    log('Flow failed', { message: err.message, stack: err.stack });
-    throw err;
-  }
-}
-function resetUi() {
-  state.prepared = null;
-  state.signedDelegation = null;
-  state.installation = null;
-  for (const name of ['connect','smart','skills','prepare','sign','confirm','trigger','history']) step(name, '', 'Not started');
-  for (const id of ['saltValue','delegateValue','signatureValue','installationValue','installationStatusValue','taskValue','hashValue','deployValue']) setText(id, '—');
-  setBadge('globalStatus', 'Idle');
-  setBadge('delegationStatus', 'Waiting');
-  setBadge('installStatus', 'Waiting');
-  setBadge('runStatus', 'Waiting');
-  setBadge('historyStatus', 'No installation');
-  el('historyOutput').className = 'empty';
-  el('historyOutput').textContent = 'No history yet.';
-  log('Reset proof UI state');
-}
-function bind(id, fn) {
-  const node = el(id);
-  if (!node) throw new Error('Missing button #' + id);
-  node.addEventListener('click', async () => {
-    node.disabled = true;
-    try { await fn(); }
-    catch (err) { log(node.textContent.trim() + ' failed', { message: err.message, stack: err.stack }); }
-    finally { node.disabled = false; }
-  });
-}
-function bindEvents() {
-  bind('connectBtn', connectWallet);
-  bind('smartBtn', createSmartAccount);
-  bind('deploySmartBtn', deploySmartAccount);
-  bind('seedBtn', seedSkills);
-  bind('loadSkillsBtn', loadSkills);
-  bind('prepareBtn', prepareDelegation);
-  bind('signBtn', signDelegation);
-  bind('confirmBtn', confirmInstallation);
-  bind('triggerBtn', triggerExecution);
-  bind('refreshBtn', refreshHistory);
-  bind('pauseBtn', () => setInstallationStatus('pause'));
-  bind('resumeBtn', () => setInstallationStatus('resume'));
-  bind('revokeBtn', () => setInstallationStatus('revoke'));
-  bind('runAllBtn', runFullFlow);
-  el('resetBtn').addEventListener('click', resetUi);
-  const provider = getInjectedProvider();
-  if (provider?.on) {
-    provider.on('accountsChanged', (accounts) => {
-      state.account = accounts?.[0] || '';
-      setText('accountValue', state.account);
-      setBadge('walletStatus', state.account ? 'Connected' : 'Disconnected', state.account ? 'ok' : 'warn');
-      log('MetaMask accounts changed', { accounts });
-    });
-    provider.on('chainChanged', (chainId) => {
-      state.chainId = chainId;
-      setText('chainValue', chainId === BASE_SEPOLIA.chainId ? 'Base Sepolia (' + chainId + ')' : chainId);
-      log('MetaMask chain changed', { chainId });
-    });
-  }
-}
-window.SkillWalletProof = {
-  state,
-  api,
-  connectWallet,
-  createSmartAccount,
-  checkSmartAccountDeployment,
-  deploySmartAccount,
-  loadExecutor,
-  seedSkills,
-  loadSkills,
-  prepareDelegation,
-  signDelegation,
-  confirmInstallation,
-  triggerExecution,
-  refreshHistory,
-  setInstallationStatus,
-  runFullFlow,
-  resetUi
-};
-window.addEventListener('error', (event) => log('Browser error', { message: event.message, source: event.filename, line: event.lineno }));
-window.addEventListener('unhandledrejection', (event) => log('Unhandled promise rejection', { message: event.reason?.message || String(event.reason) }));
-bindEvents();
-loadExecutor().catch((err) => log('Executor load failed', { message: err.message }));
-log('Proof harness ready. Inspect window.SkillWalletProof in DevTools.');
-</script>
-</body>
+
+      function extractErrorDetails(err) {
+        return {
+          name: err?.name,
+          message: err?.message || String(err),
+          shortMessage: err?.shortMessage,
+          details: err?.details,
+          code: err?.code ?? err?.data?.code ?? err?.cause?.code,
+          data: err?.data,
+          cause: err?.cause
+            ? {
+                name: err.cause?.name,
+                message: err.cause?.message,
+                shortMessage: err.cause?.shortMessage,
+                details: err.cause?.details,
+                code: err.cause?.code ?? err.cause?.data?.code,
+                data: err.cause?.data,
+              }
+            : undefined,
+          metaMessages: err?.metaMessages,
+          docsPath: err?.docsPath,
+          stack: err?.stack,
+          raw: safeStringify(err),
+        };
+      }
+
+      function redactUrl(url) {
+        try {
+          const u = new URL(url);
+
+          for (const key of ['apikey', 'apiKey', 'key', 'token', 'auth']) {
+            if (u.searchParams.has(key)) u.searchParams.set(key, 'REDACTED');
+          }
+
+          return u.toString();
+        } catch {
+          return String(url)
+            .replace(/apikey=[^&]+/gi, 'apikey=REDACTED')
+            .replace(/apiKey=[^&]+/g, 'apiKey=REDACTED')
+            .replace(/token=[^&]+/gi, 'token=REDACTED');
+        }
+      }
+
+      function setBadge(id, text, kind) {
+        const node = el(id);
+        if (!node) return;
+        node.textContent = text;
+        node.className = 'badge' + (kind ? ' ' + kind : '');
+      }
+
+      function setText(id, text) {
+        const node = el(id);
+        if (!node) return;
+        node.textContent = text || '—';
+      }
+
+      function setJson(id, value) {
+        const node = el(id);
+        if (!node) return;
+        node.classList.remove('empty');
+        node.textContent = typeof value === 'string' ? value : safeStringify(value, 2);
+      }
+
+      function resetPre(id, text) {
+        const node = el(id);
+        if (!node) return;
+        node.className = 'empty';
+        node.textContent = text;
+      }
+
+      function step(name, kind, meta) {
+        const dot = document.querySelector('[data-dot="' + name + '"]');
+        const label = document.querySelector('[data-step="' + name + '"]');
+
+        if (dot) dot.className = 'dot' + (kind ? ' ' + kind : '');
+        if (label) label.textContent = meta || '';
+      }
+
+      function log(message, data) {
+        const time = new Date().toISOString();
+        const entry = { time, message, data };
+        debugLogs.unshift(entry);
+
+        const payload = data === undefined ? '' : '\n' + safeStringify(data, 2);
+        const text = '[' + time + '] ' + message + payload;
+
+        const out = el('logOutput');
+
+        if (out) {
+          out.classList.remove('empty');
+          out.textContent =
+            text + '\n\n' + (out.textContent === 'Waiting for actions.' ? '' : out.textContent);
+        }
+
+        console.debug('[SkillWallet Proof]', message, data);
+      }
+
+      function getDebugState() {
+        return {
+          account: state.account,
+          chainId: state.chainId,
+          targetChainId: state.targetChainId,
+          switchingChain: state.switchingChain,
+          smartAccountAddress: state.smartAccountAddress,
+          smartAccountDeployed: state.smartAccountDeployed,
+          hasProvider: Boolean(state.provider),
+          hasWalletClient: Boolean(state.walletClient),
+          hasPublicClient: Boolean(state.publicClient),
+          hasSmartAccount: Boolean(state.smartAccount),
+          providerEventsBound: state.providerEventsBound,
+          busy: state.busy,
+          activeAction: state.activeAction,
+          selectedSkill: state.selectedSkill,
+          prepared: state.prepared,
+          signedDelegation: state.signedDelegation,
+          installation: state.installation,
+          attempt: state.attempt,
+        };
+      }
+
+      async function copyTextToClipboard(text, successBadgeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          setBadge('logStatus', successBadgeText, 'ok');
+        } catch (err) {
+          setBadge('logStatus', 'Copy failed', 'fail');
+          console.log(text);
+          log('CLIPBOARD_COPY_FAILED_PRINTED_TO_CONSOLE', extractErrorDetails(err));
+        }
+      }
+
+      function adminHeaders() {
+        const input = el('adminKeyInput');
+        const key = input?.value?.trim() || '';
+        return key ? { 'x-api-key': key } : {};
+      }
+
+      function normalizeError(err) {
+        const code = err?.code ?? err?.data?.code ?? err?.cause?.code;
+        const message = err?.shortMessage || err?.message || String(err);
+
+        if (
+          code === -32002 ||
+          message.includes('Request of type') ||
+          message.includes('already pending')
+        ) {
+          const normalized = new Error(
+            'MetaMask masih punya request pending untuk origin ini. Buka MetaMask dan approve/reject popup yang masih menggantung. Jangan klik tombol lain dulu.',
+          );
+          normalized.debug = extractErrorDetails(err);
+          return normalized;
+        }
+
+        if (code === 4001) {
+          const normalized = new Error('User rejected MetaMask request.');
+          normalized.debug = extractErrorDetails(err);
+          return normalized;
+        }
+
+        if (code === 4100) {
+          const normalized = new Error(
+            'MetaMask belum authorize account/method untuk origin ini. Klik Connect MetaMask sekali, selesaikan popup, lalu retry.',
+          );
+          normalized.debug = extractErrorDetails(err);
+          return normalized;
+        }
+
+        const normalized = err instanceof Error ? err : new Error(message);
+        normalized.debug = extractErrorDetails(err);
+        return normalized;
+      }
+
+      async function rpcPost(url, payload, label) {
+        log('RPC_REQUEST: ' + label, {
+          url: redactUrl(url),
+          payload,
+        });
+
+        let res;
+        let text;
+
+        try {
+          res = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          text = await res.text();
+        } catch (err) {
+          log('RPC_NETWORK_ERROR: ' + label, {
+            url: redactUrl(url),
+            error: extractErrorDetails(err),
+          });
+
+          throw err;
+        }
+
+        let json;
+        try {
+          json = text ? JSON.parse(text) : {};
+        } catch {
+          json = { raw: text };
+        }
+
+        log('RPC_RESPONSE: ' + label, {
+          url: redactUrl(url),
+          status: res.status,
+          ok: res.ok,
+          body: json,
+        });
+
+        if (!res.ok) {
+          throw new Error(label + ' HTTP ' + res.status + ': ' + text);
+        }
+
+        if (json.error) {
+          const err = new Error(label + ' RPC error: ' + (json.error.message || 'unknown'));
+          err.code = json.error.code;
+          err.data = json.error.data;
+          err.rpcBody = json;
+          throw err;
+        }
+
+        return json;
+      }
+
+      async function requestJson(path, options = {}) {
+        const headers = Object.assign(
+          { 'content-type': 'application/json' },
+          options.headers || {},
+        );
+
+        let parsedBody;
+        try {
+          parsedBody = options.body ? JSON.parse(options.body) : undefined;
+        } catch {
+          parsedBody = options.body;
+        }
+
+        log('HTTP_REQUEST', {
+          path,
+          method: options.method || 'GET',
+          headers: Object.keys(headers).reduce((acc, key) => {
+            acc[key] = key.toLowerCase().includes('key') ? 'REDACTED' : headers[key];
+            return acc;
+          }, {}),
+          body: parsedBody,
+        });
+
+        const res = await fetch(path, Object.assign({}, options, { headers }));
+        const text = await res.text();
+
+        let body = {};
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = { raw: text };
+          }
+        }
+
+        log('HTTP_RESPONSE', {
+          path,
+          status: res.status,
+          ok: res.ok,
+          body,
+        });
+
+        if (!res.ok) {
+          const message =
+            body?.error?.message || body?.message || body?.raw || 'HTTP ' + res.status;
+          throw new Error(Array.isArray(message) ? message.join(', ') : message);
+        }
+
+        return body?.payload ?? body?.data ?? body;
+      }
+
+      async function loadLibraries() {
+        if (state.libs) return state.libs;
+
+        log('LIBRARIES_LOADING');
+
+        const [smartKit, viem, chains, accountAbstraction] = await Promise.all([
+          import('https://esm.sh/@metamask/smart-accounts-kit@1.6.0'),
+          import('https://esm.sh/viem@2.52.2'),
+          import('https://esm.sh/viem@2.52.2/chains'),
+          import('https://esm.sh/viem@2.52.2/account-abstraction'),
+        ]);
+
+        state.libs = { smartKit, viem, chains, accountAbstraction };
+
+        log('LIBRARIES_LOADED', {
+          smartKitKeys: Object.keys(smartKit),
+          viemVersionNote: 'Loaded from esm.sh viem@2.52.2',
+        });
+
+        return state.libs;
+      }
+
+      function getInjectedProvider() {
+        const ethereum = window.ethereum;
+        if (!ethereum) return null;
+
+        if (Array.isArray(ethereum.providers)) {
+          const metamasks = ethereum.providers.filter((provider) => provider.isMetaMask);
+          if (metamasks.length > 1) {
+            log('MULTIPLE_METAMASK_PROVIDERS_DETECTED', {
+              count: metamasks.length,
+              providerFlags: metamasks.map((p) => ({
+                isMetaMask: p.isMetaMask,
+                isFlask: p.isMetaMaskFlask,
+                isBraveWallet: p.isBraveWallet,
+                isRabby: p.isRabby,
+              })),
+            });
+          }
+
+          return metamasks[0] || ethereum.providers[0];
+        }
+
+        return ethereum;
+      }
+
+      function allButtons() {
+        return Array.from(document.querySelectorAll('button'));
+      }
+
+      function setBusy(isBusy, activeButton, label) {
+        state.busy = isBusy;
+        state.activeAction = isBusy ? label : '';
+
+        for (const button of allButtons()) {
+          button.disabled = isBusy ? button !== activeButton : false;
+        }
+
+        if (!activeButton) return;
+
+        if (isBusy) {
+          activeButton.dataset.originalText = activeButton.textContent;
+          activeButton.innerHTML = '<span class="spinner"></span>' + label;
+        } else if (activeButton.dataset.originalText) {
+          activeButton.textContent = activeButton.dataset.originalText;
+          delete activeButton.dataset.originalText;
+        }
+      }
+
+      async function runAction(button, label, fn) {
+        if (state.busy) {
+          log('ACTION_IGNORED_BUSY', {
+            activeAction: state.activeAction,
+            ignored: label,
+          });
+          return;
+        }
+
+        setBusy(true, button, label);
+        setBadge('globalStatus', label, 'warn');
+
+        try {
+          log('ACTION_START: ' + label, getDebugState());
+
+          const result = await fn();
+
+          log('ACTION_SUCCESS: ' + label, {
+            result,
+            state: getDebugState(),
+          });
+
+          setBadge('globalStatus', 'Ready', 'ok');
+          return result;
+        } catch (rawErr) {
+          const err = normalizeError(rawErr);
+
+          setBadge('globalStatus', 'Failed', 'fail');
+
+          log('ACTION_FAILED: ' + label, {
+            normalizedMessage: err.message,
+            normalizedDebug: err.debug,
+            rawError: extractErrorDetails(rawErr),
+            state: getDebugState(),
+          });
+
+          throw err;
+        } finally {
+          setBusy(false, button, label);
+        }
+      }
+
+      function validateBytes32Salt(value) {
+        if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
+          throw new Error('deploySalt must be bytes32 hex: 0x + 64 hex chars');
+        }
+
+        return value;
+      }
+
+      function getDeploySalt() {
+        return validateBytes32Salt(el('deploySaltInput')?.value?.trim() || '');
+      }
+
+      function resetSmartAccountState(reason) {
+        state.walletClient = null;
+        state.publicClient = null;
+        state.smartAccount = null;
+        state.smartAccountAddress = '';
+        state.smartAccountDeployed = false;
+
+        setText('smartValue', '—');
+        setText('deployValue', '—');
+        setBadge('deployStatus', 'Not deployed');
+
+        step('smart', '', 'Not started');
+        step('deploy', '', 'Not started');
+
+        if (reason) log('SMART_ACCOUNT_STATE_RESET', { reason });
+      }
+
+      function updateDisplayedChain(chainId) {
+        state.chainId = chainId;
+
+        setText(
+          'chainValue',
+          chainId === BASE_SEPOLIA_HEX ? 'Base Sepolia (' + chainId + ')' : chainId,
+        );
+      }
+
+      async function waitForChain(chainHex, timeoutMs = 7000) {
+        if (!state.provider) throw new Error('provider missing');
+
+        const startedAt = Date.now();
+        let last = '';
+
+        while (Date.now() - startedAt < timeoutMs) {
+          const current = await state.provider.request({ method: 'eth_chainId' });
+          last = current;
+
+          log('CHAIN_WAIT_TICK', {
+            current,
+            expected: chainHex,
+          });
+
+          if (current === chainHex) {
+            updateDisplayedChain(current);
+            return current;
+          }
+
+          await sleep(250);
+        }
+
+        throw new Error('Timed out waiting for chain ' + chainHex + '. Last chain: ' + last);
+      }
+
+      async function ensureBaseSepoliaInternal() {
+        if (!state.provider) throw new Error('provider missing');
+
+        if (state.chainSettlePromise) {
+          log('CHAIN_SETTLE_REUSING_EXISTING_PROMISE');
+          return await state.chainSettlePromise;
+        }
+
+        state.chainSettlePromise = (async () => {
+          const current = await state.provider.request({ method: 'eth_chainId' });
+
+          log('CHAIN_CHECK', {
+            current,
+            expected: BASE_SEPOLIA_HEX,
+          });
+
+          if (current !== BASE_SEPOLIA_HEX) {
+            state.switchingChain = true;
+            state.targetChainId = BASE_SEPOLIA_HEX;
+
+            try {
+              log('CHAIN_SWITCH_REQUEST', { chainId: BASE_SEPOLIA_HEX });
+
+              await state.provider.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: BASE_SEPOLIA_HEX }],
+              });
+
+              log('CHAIN_SWITCH_RPC_RETURNED', { chainId: BASE_SEPOLIA_HEX });
+            } catch (err) {
+              log('CHAIN_SWITCH_FAILED', extractErrorDetails(err));
+
+              if (err.code !== 4902) throw err;
+
+              log('CHAIN_ADD_REQUEST', BASE_SEPOLIA);
+
+              await state.provider.request({
+                method: 'wallet_addEthereumChain',
+                params: [BASE_SEPOLIA],
+              });
+
+              log('CHAIN_ADD_SUCCESS', BASE_SEPOLIA);
+            } finally {
+              await sleep(600);
+            }
+          }
+
+          const settled = await waitForChain(BASE_SEPOLIA_HEX, 7000);
+
+          log('CHAIN_SETTLED', {
+            chainId: settled,
+          });
+
+          state.switchingChain = false;
+          return settled;
+        })();
+
+        try {
+          return await state.chainSettlePromise;
+        } finally {
+          state.switchingChain = false;
+          state.chainSettlePromise = null;
+        }
+      }
+
+      /**
+       * IMPORTANT:
+       * Only Connect MetaMask may request account permission.
+       * Create/Deploy/Sign only validate existing authorization.
+       *
+       * Even more important for MetaMask Flask:
+       * Do NOT silently switch from cached account to accounts[0] during an action.
+       * If MetaMask changes selected account mid-flow, stop early with a clear error.
+       */
+      async function getProviderAccounts(label = 'ETH_ACCOUNTS_CHECK') {
+        if (!state.provider) throw new Error('provider missing');
+
+        let accounts = [];
+
+        try {
+          accounts = await state.provider.request({ method: 'eth_accounts' });
+        } catch (err) {
+          log(label + '_FAILED', extractErrorDetails(err));
+        }
+
+        return accounts || [];
+      }
+
+      async function waitForProviderAccounts(label = 'ETH_ACCOUNTS_WAIT', timeoutMs = 1200) {
+        const startedAt = Date.now();
+        let lastAccounts = [];
+
+        while (Date.now() - startedAt < timeoutMs) {
+          const accounts = await getProviderAccounts(label);
+          lastAccounts = accounts;
+
+          log(label + '_TICK', {
+            accounts,
+            elapsedMs: Date.now() - startedAt,
+          });
+
+          if (accounts.length) return accounts;
+
+          await sleep(120);
+        }
+
+        return lastAccounts;
+      }
+
+      /**
+       * MetaMask Flask can emit selected-account changes around permission/signing UI.
+       * For this proof harness, the safest behavior is:
+       * - Connect may request permission.
+       * - Other actions may adopt the currently selected authorized account at ACTION START.
+       * - If account changes, reset derived Smart Account state and rebuild from the new account.
+       *
+       * This avoids stale cached account -> wallet selected account mismatch, which caused 4100.
+       */
+      async function ensureAuthorizedAccountInternal({
+        allowRequest = false,
+        adoptSelected = true,
+      } = {}) {
+        if (!state.provider) throw new Error('provider missing');
+
+        const libs = await loadLibraries();
+        let accounts = await waitForProviderAccounts(
+          'ETH_ACCOUNTS_CHECK',
+          allowRequest ? 600 : 1200,
+        );
+
+        log('ETH_ACCOUNTS_CHECK_RESULT', {
+          accounts,
+          cachedAccount: state.account,
+          selectedProviderAccount: accounts[0] || '',
+          allowRequest,
+          adoptSelected,
+        });
+
+        if (allowRequest && !accounts.length) {
+          log('ACCOUNT_REQUEST_START');
+
+          const requestClient = libs.viem.createWalletClient({
+            chain: libs.chains.baseSepolia,
+            transport: libs.viem.custom(state.provider),
+          });
+
+          const requested = await requestClient.requestAddresses();
+          const account = requested?.[0];
+
+          if (!account) throw new Error('No account returned after MetaMask authorization.');
+
+          accounts = requested;
+
+          log('ACCOUNT_REQUEST_DONE', {
+            account,
+            requested,
+          });
+        }
+
+        if (!accounts.length) {
+          throw new Error(
+            'MetaMask returned no authorized accounts. Click Connect MetaMask once and finish the popup.',
+          );
+        }
+
+        const selected = accounts[0];
+        const selectedLower = selected.toLowerCase();
+        const currentLower = state.account?.toLowerCase() || '';
+
+        if (!state.account || currentLower !== selectedLower) {
+          const previous = state.account;
+
+          if (!adoptSelected) {
+            throw new Error(
+              'MetaMask selected account changed. Cached ' +
+                previous +
+                ', selected ' +
+                selected +
+                '. Retry after selecting one stable account in MetaMask.',
+            );
+          }
+
+          if (previous) {
+            resetSmartAccountState('Adopting current MetaMask selected account: ' + selected);
+          }
+
+          state.account = selected;
+          state.walletClient = null;
+          setText('accountValue', selected);
+
+          log('ACCOUNT_ADOPTED_FROM_PROVIDER_SELECTED', {
+            previous,
+            selected,
+            accounts,
+          });
+        } else {
+          log('ACCOUNT_ALREADY_AUTHORIZED_AND_SELECTED', {
+            account: state.account,
+            accounts,
+          });
+        }
+
+        return state.account;
+      }
+
+      async function assertActiveAccountMatchesSmartAccountOwner(label) {
+        const before = state.account;
+        const selected = await ensureAuthorizedAccountInternal({
+          allowRequest: false,
+          adoptSelected: true,
+        });
+
+        log(label + '_ACTIVE_ACCOUNT_SYNCED', {
+          previousAccount: before,
+          activeAccount: selected,
+          smartAccountAddress: state.smartAccountAddress,
+        });
+
+        return selected;
+      }
+
+      async function createWalletClientFromCachedAccount() {
+        if (!state.provider) {
+          const provider = getInjectedProvider();
+          if (!provider) throw new Error('MetaMask injected provider not found');
+
+          state.provider = provider;
+          bindProviderEvents();
+        }
+
+        if (!state.account) {
+          throw new Error('No authorized MetaMask account. Click Connect MetaMask first.');
+        }
+
+        await ensureBaseSepoliaInternal();
+
+        const libs = await loadLibraries();
+
+        state.walletClient = libs.viem.createWalletClient({
+          account: state.account,
+          chain: libs.chains.baseSepolia,
+          transport: libs.viem.custom(state.provider),
+        });
+
+        setText('accountValue', state.account);
+
+        log('WALLET_CLIENT_CREATED_FROM_CACHED_ACCOUNT', {
+          account: state.account,
+          chainId: state.chainId,
+        });
+
+        return {
+          libs,
+          account: state.account,
+          walletClient: state.walletClient,
+        };
+      }
+
+      async function connectWalletInternal() {
+        step('connect', 'active', 'Requesting MetaMask account access');
+        setBadge('walletStatus', 'Connecting', 'warn');
+
+        const provider = getInjectedProvider();
+        if (!provider) throw new Error('MetaMask injected provider not found');
+
+        state.provider = provider;
+        bindProviderEvents();
+
+        await loadLibraries();
+
+        const account = await ensureAuthorizedAccountInternal({ allowRequest: true });
+
+        await ensureBaseSepoliaInternal();
+
+        const libs = await loadLibraries();
+
+        state.walletClient = libs.viem.createWalletClient({
+          account,
+          chain: libs.chains.baseSepolia,
+          transport: libs.viem.custom(provider),
+        });
+
+        setBadge('walletStatus', 'Connected', 'ok');
+        step('connect', 'done', state.account);
+
+        log('CONNECT_DONE', {
+          account: state.account,
+          chainId: state.chainId,
+        });
+      }
+
+      async function createSmartAccountInternal() {
+        if (!state.provider || !state.account) {
+          throw new Error(
+            'Click Connect MetaMask first. Create Hybrid SA will not request account permission.',
+          );
+        }
+
+        await ensureBaseSepoliaInternal();
+        await ensureAuthorizedAccountInternal();
+
+        const { libs, account, walletClient } = await createWalletClientFromCachedAccount();
+        const deploySalt = getDeploySalt();
+
+        step('smart', 'active', 'Creating Hybrid smart account');
+        setBadge('walletStatus', 'Creating Hybrid SA', 'warn');
+
+        state.publicClient = libs.viem.createPublicClient({
+          chain: libs.chains.baseSepolia,
+          transport: libs.viem.http(BASE_SEPOLIA.rpcUrls[0]),
+        });
+
+        log('SMART_ACCOUNT_CREATE_INPUT', {
+          implementation: 'Hybrid',
+          owner: account,
+          deployParams: [account, [], [], []],
+          deploySalt,
+        });
+
+        state.smartAccount = await libs.smartKit.toMetaMaskSmartAccount({
+          client: state.publicClient,
+          implementation: libs.smartKit.Implementation.Hybrid,
+          deployParams: [account, [], [], []],
+          deploySalt,
+          signer: { walletClient },
+        });
+
+        state.smartAccountAddress =
+          state.smartAccount.address || (await state.smartAccount.getAddress?.()) || '';
+
+        if (!state.smartAccountAddress) {
+          throw new Error('Failed to derive Hybrid smart account address.');
+        }
+
+        setText('smartValue', state.smartAccountAddress);
+        setBadge('walletStatus', 'Hybrid SA ready', 'ok');
+        step('smart', 'done', state.smartAccountAddress);
+
+        log('SMART_ACCOUNT_CREATED', {
+          address: state.smartAccountAddress,
+          deploySalt,
+          implementation: 'Hybrid',
+          owner: account,
+          smartAccountKeys: Object.keys(state.smartAccount || {}),
+          environment: state.smartAccount.environment,
+        });
+
+        await checkSmartAccountDeploymentInternal();
+      }
+
+      async function recreateSmartAccountWithFreshSigner(reason) {
+        if (!state.provider) throw new Error('provider missing');
+        if (!state.account) throw new Error('account missing');
+
+        const libs = await loadLibraries();
+
+        await ensureBaseSepoliaInternal();
+        await ensureAuthorizedAccountInternal();
+
+        const { walletClient } = await createWalletClientFromCachedAccount();
+
+        if (!state.publicClient) {
+          state.publicClient = libs.viem.createPublicClient({
+            chain: libs.chains.baseSepolia,
+            transport: libs.viem.http(BASE_SEPOLIA.rpcUrls[0]),
+          });
+        }
+
+        const deploySalt = getDeploySalt();
+
+        log('SMART_ACCOUNT_RECREATE_WITH_FRESH_SIGNER_INPUT', {
+          reason,
+          account: state.account,
+          deploySalt,
+        });
+
+        state.smartAccount = await libs.smartKit.toMetaMaskSmartAccount({
+          client: state.publicClient,
+          implementation: libs.smartKit.Implementation.Hybrid,
+          deployParams: [state.account, [], [], []],
+          deploySalt,
+          signer: { walletClient },
+        });
+
+        state.smartAccountAddress =
+          state.smartAccount.address || (await state.smartAccount.getAddress?.()) || '';
+
+        setText('smartValue', state.smartAccountAddress);
+
+        log('SMART_ACCOUNT_RECREATED_WITH_FRESH_SIGNER', {
+          reason,
+          smartAccountAddress: state.smartAccountAddress,
+          account: state.account,
+        });
+
+        return state.smartAccount;
+      }
+
+      async function checkSmartAccountDeploymentInternal() {
+        if (!state.smartAccountAddress) throw new Error('smartAccountAddress missing');
+
+        const libs = await loadLibraries();
+
+        if (!state.publicClient) {
+          state.publicClient = libs.viem.createPublicClient({
+            chain: libs.chains.baseSepolia,
+            transport: libs.viem.http(BASE_SEPOLIA.rpcUrls[0]),
+          });
+        }
+
+        const code = await state.publicClient.getCode({
+          address: state.smartAccountAddress,
+        });
+
+        state.smartAccountDeployed = Boolean(code && code !== '0x');
+
+        setText('deployValue', state.smartAccountDeployed ? 'Deployed' : 'Not deployed');
+
+        setBadge(
+          'deployStatus',
+          state.smartAccountDeployed ? 'Deployed' : 'Not deployed',
+          state.smartAccountDeployed ? 'ok' : 'warn',
+        );
+
+        log('SMART_ACCOUNT_DEPLOYMENT_CHECKED', {
+          address: state.smartAccountAddress,
+          deployed: state.smartAccountDeployed,
+          code,
+          codeLength: code?.length || 0,
+        });
+
+        return state.smartAccountDeployed;
+      }
+
+      async function getPimlicoGasPrice(bundlerUrl) {
+        const json = await rpcPost(
+          bundlerUrl,
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'pimlico_getUserOperationGasPrice',
+            params: [],
+          },
+          'pimlico_getUserOperationGasPrice',
+        );
+
+        if (!json.result?.fast) {
+          throw new Error(
+            'pimlico_getUserOperationGasPrice returned invalid response: ' + safeStringify(json),
+          );
+        }
+
+        const gasPrice = {
+          maxFeePerGas: BigInt(json.result.fast.maxFeePerGas),
+          maxPriorityFeePerGas: BigInt(json.result.fast.maxPriorityFeePerGas),
+        };
+
+        log('PIMLICO_GAS_PRICE_SELECTED', {
+          raw: json.result,
+          selected: gasPrice,
+        });
+
+        return gasPrice;
+      }
+
+      function classifyDeployError(err) {
+        const text = safeStringify(err).toLowerCase();
+
+        if (text.includes('4100') || text.includes('unauthorized')) {
+          return '4100 Unauthorized: click Connect once, finish popup, then retry. Create/Deploy will not open permission popup.';
+        }
+
+        if (text.includes('aa21') || text.includes("didn't pay prefund")) {
+          return 'AA21: paymaster tidak sponsor / account tidak bayar prefund. Cek sponsorshipPolicyId, paymaster config, atau bundler/paymaster URL.';
+        }
+
+        if (text.includes('aa23')) {
+          return 'AA23: validateUserOp reverted. Bisa signer/account validation, nonce, atau initCode bermasalah.';
+        }
+
+        if (text.includes('aa24')) {
+          return 'AA24: signature validation failed. Cek owner walletClient, chain, atau account berubah.';
+        }
+
+        if (text.includes('aa25')) {
+          return 'AA25: invalid account nonce.';
+        }
+
+        if (text.includes('aa31') || text.includes('paymaster')) {
+          return 'Paymaster problem. Cek policy ID, policy balance, allowed chain, allowed entrypoint, atau sponsorship rule.';
+        }
+
+        if (text.includes('policy') || text.includes('sponsor')) {
+          return 'Sponsorship policy kemungkinan invalid / tidak match chain / tidak allow this UserOp.';
+        }
+
+        if (text.includes('user rejected') || text.includes('4001')) {
+          return 'User reject signature di MetaMask.';
+        }
+
+        if (text.includes('already pending') || text.includes('-32002')) {
+          return 'MetaMask masih punya request pending. Selesaikan popup MetaMask dulu.';
+        }
+
+        if (text.includes('network') || text.includes('fetch')) {
+          return 'Network/fetch error ke bundler/paymaster.';
+        }
+
+        if (text.includes('simulation') || text.includes('reverted')) {
+          return 'Bundler simulation reverted. Lihat details/data di raw error.';
+        }
+
+        return 'Unknown deploy error. Copy full SkillWalletDebug.copyLogs() output.';
+      }
+
+      async function deploySmartAccountInternal() {
+        log('DEPLOY_START', getDebugState());
+
+        if (!state.provider || !state.account) {
+          throw new Error(
+            'Click Connect MetaMask first. Deploy will not request account permission.',
+          );
+        }
+
+        await ensureBaseSepoliaInternal();
+        await ensureAuthorizedAccountInternal({ allowRequest: false, adoptSelected: true });
+
+        if (!state.smartAccount) {
+          log('DEPLOY_PREP_SMART_ACCOUNT_MISSING_CREATE_FIRST');
+          await createSmartAccountInternal();
+        }
+
+        await createWalletClientFromCachedAccount();
+        await recreateSmartAccountWithFreshSigner('before deploy');
+
+        const already = await checkSmartAccountDeploymentInternal();
+
+        if (already) {
+          setBadge('deployStatus', 'Already deployed', 'ok');
+          step('deploy', 'done', 'Already deployed');
+
+          log('DEPLOY_SKIP_ALREADY_DEPLOYED', {
+            smartAccountAddress: state.smartAccountAddress,
+          });
+
+          return;
+        }
+
+        const bundlerUrl = el('bundlerUrlInput')?.value?.trim() || '';
+        const paymasterUrl = el('paymasterUrlInput')?.value?.trim() || bundlerUrl;
+        const sponsorshipPolicyId = el('sponsorshipPolicyInput')?.value?.trim() || '';
+
+        log('DEPLOY_CONFIG', {
+          bundlerUrl: redactUrl(bundlerUrl),
+          paymasterUrl: redactUrl(paymasterUrl),
+          hasSponsorshipPolicyId: Boolean(sponsorshipPolicyId),
+          sponsorshipPolicyIdPrefix: sponsorshipPolicyId
+            ? sponsorshipPolicyId.slice(0, 10) + '…'
+            : '',
+          smartAccountAddress: state.smartAccountAddress,
+          owner: state.account,
+          chainId: state.chainId,
+        });
+
+        if (!bundlerUrl) throw new Error('Bundler URL is required');
+        if (!paymasterUrl) throw new Error('Paymaster URL is required');
+        if (!sponsorshipPolicyId) throw new Error('Sponsorship policy ID is required');
+
+        const libs = await loadLibraries();
+
+        step('deploy', 'active', 'Preparing bundler/paymaster clients');
+        setBadge('deployStatus', 'Preparing clients', 'warn');
+        setText('deployValue', 'Preparing bundler/paymaster clients.');
+
+        const paymasterClient = libs.accountAbstraction.createPaymasterClient({
+          transport: libs.viem.http(paymasterUrl),
+        });
+
+        const bundlerClient = libs.accountAbstraction.createBundlerClient({
+          client: state.publicClient,
+          chain: libs.chains.baseSepolia,
+          transport: libs.viem.http(bundlerUrl),
+          paymaster: paymasterClient,
+          paymasterContext: { sponsorshipPolicyId },
+        });
+
+        log('DEPLOY_CLIENTS_CREATED', {
+          hasPaymasterClient: Boolean(paymasterClient),
+          hasBundlerClient: Boolean(bundlerClient),
+          publicClientChain: state.publicClient?.chain,
+        });
+
+        step('deploy', 'active', 'Fetching gas price');
+        setBadge('deployStatus', 'Fetching gas price', 'warn');
+
+        const gasPrice = await getPimlicoGasPrice(bundlerUrl);
+
+        await assertActiveAccountMatchesSmartAccountOwner('DEPLOY_BEFORE_SEND_USEROP');
+        await recreateSmartAccountWithFreshSigner('immediately before sendUserOperation');
+
+        const deployCall = {
+          to: state.account,
+          value: 0n,
+          data: '0x',
+        };
+
+        log('DEPLOY_USEROP_INPUT', {
+          accountAddress: state.smartAccountAddress,
+          owner: state.account,
+          call: deployCall,
+          gasPrice,
+        });
+
+        step('deploy', 'active', 'Waiting for MetaMask signature / bundler simulation');
+        setBadge('deployStatus', 'Waiting for signature', 'warn');
+        setText('deployValue', 'Waiting for MetaMask signature or bundler simulation.');
+
+        let userOperationHash;
+
+        try {
+          userOperationHash = await bundlerClient.sendUserOperation({
+            account: state.smartAccount,
+            calls: [deployCall],
+            ...gasPrice,
+          });
+
+          log('DEPLOY_SEND_USEROP_SUCCESS', {
+            userOperationHash,
+          });
+        } catch (err) {
+          log('DEPLOY_SEND_USEROP_FAILED', {
+            error: extractErrorDetails(err),
+            hint: classifyDeployError(err),
+            deployCall,
+            gasPrice,
+            state: getDebugState(),
+          });
+
+          throw err;
+        }
+
+        setText('deployValue', 'UserOp sent: ' + userOperationHash);
+        setBadge('deployStatus', 'UserOp sent', 'warn');
+
+        step('deploy', 'active', 'Waiting for UserOperation receipt');
+
+        let receipt;
+
+        try {
+          receipt = await bundlerClient.waitForUserOperationReceipt({
+            hash: userOperationHash,
+          });
+
+          log('DEPLOY_USEROP_RECEIPT', receipt);
+        } catch (err) {
+          log('DEPLOY_WAIT_RECEIPT_FAILED', {
+            userOperationHash,
+            error: extractErrorDetails(err),
+          });
+
+          throw err;
+        }
+
+        const txHash = receipt?.receipt?.transactionHash || userOperationHash;
+
+        setText('deployValue', txHash);
+
+        await checkSmartAccountDeploymentInternal();
+
+        if (!state.smartAccountDeployed) {
+          log('DEPLOY_INCLUDED_BUT_CODE_STILL_EMPTY', {
+            smartAccountAddress: state.smartAccountAddress,
+            txHash,
+            receipt,
+          });
+
+          throw new Error('UserOp included, but smart account code is still empty.');
+        }
+
+        setBadge('deployStatus', 'Deployed', 'ok');
+        step('deploy', 'done', txHash);
+
+        log('DEPLOY_DONE', {
+          smartAccountAddress: state.smartAccountAddress,
+          txHash,
+        });
+      }
+
+      async function loadExecutorInternal() {
+        try {
+          const data = await requestJson('/executor/address');
+
+          state.executor = data;
+          setText('executorValue', data.address || data.executorAddress || safeStringify(data));
+
+          log('EXECUTOR_LOADED', data);
+
+          return data;
+        } catch (err) {
+          setText('executorValue', 'not available: ' + err.message);
+          log('EXECUTOR_LOAD_FAILED', extractErrorDetails(err));
+          return null;
+        }
+      }
+
+      async function seedSkillsInternal() {
+        setBadge('skillsStatus', 'Seeding', 'warn');
+
+        const data = await requestJson('/admin/skills/seed', {
+          method: 'POST',
+          headers: adminHeaders(),
+          body: '{}',
+        });
+
+        setBadge('skillsStatus', 'Seeded', 'ok');
+        log('SKILLS_SEEDED', data);
+
+        await loadSkillsInternal();
+      }
+
+      function normalizeSkillsResponse(body) {
+        if (Array.isArray(body)) return body;
+        if (Array.isArray(body.data)) return body.data;
+        if (Array.isArray(body.items)) return body.items;
+        if (Array.isArray(body.skills)) return body.skills;
+        return [];
+      }
+
+      async function loadSkillsInternal() {
+        step('skills', 'active', 'Fetching /skills');
+        setBadge('skillsStatus', 'Loading', 'warn');
+
+        const body = await requestJson('/skills');
+        state.skills = normalizeSkillsResponse(body);
+
+        const select = el('skillSelect');
+        if (!select) return;
+
+        select.innerHTML = '';
+
+        if (!state.skills.length) {
+          state.selectedSkill = null;
+
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = 'No skills found';
+          select.appendChild(option);
+
+          setBadge('skillsStatus', 'Empty', 'warn');
+          step('skills', 'active', 'No skills found');
+          log('SKILLS_EMPTY', body);
+
+          return;
+        }
+
+        for (const skill of state.skills) {
+          const id = skill.skillId || skill._id || skill.id;
+
+          const option = document.createElement('option');
+          option.value = id;
+          option.textContent = (skill.name || id) + ' · ' + id;
+
+          select.appendChild(option);
+        }
+
+        const preferred =
+          state.skills.find((s) => (s.skillId || s._id || s.id) === DEFAULT_SKILL_ID) ||
+          state.skills.find((s) => String(s.skillId || s._id || s.id).includes('dca')) ||
+          state.skills[0];
+
+        state.selectedSkill = preferred;
+        select.value = preferred.skillId || preferred._id || preferred.id;
+
+        setText('selectedSkillValue', select.value);
+
+        select.onchange = () => {
+          state.selectedSkill =
+            state.skills.find((s) => (s.skillId || s._id || s.id) === select.value) || null;
+
+          setText('selectedSkillValue', select.value);
+          log('SKILL_SELECTED', state.selectedSkill);
+        };
+
+        setBadge('skillsStatus', state.skills.length + ' loaded', 'ok');
+        step('skills', 'done', state.skills.length + ' skills loaded');
+        log('SKILLS_LOADED', state.skills);
+      }
+
+      function buildDcaConfig() {
+        if (!state.smartAccountAddress) throw new Error('create Hybrid SA first');
+
+        return {
+          type: 'direct-router-dca',
+          tokenIn: { address: ADDRS.usdc },
+          tokenOut: { address: ADDRS.weth },
+          amountPerRun: el('amountInput')?.value?.trim() || '100000',
+          frequency: el('frequencyInput')?.value || 'daily',
+          maxSlippageBps: Number(el('slippageInput')?.value || '50'),
+          router: { name: 'uniswap-v3', address: ADDRS.swapRouter02 },
+          feeTier: Number(el('feeTierInput')?.value || '3000'),
+          recipient: state.smartAccountAddress,
+          quoteMode: 'router-quote',
+        };
+      }
+
+      async function prepareDelegationInternal() {
+        if (!state.provider || !state.account) {
+          throw new Error('Click Connect MetaMask first.');
+        }
+
+        if (!state.smartAccount) await createSmartAccountInternal();
+        if (!state.smartAccountDeployed) await deploySmartAccountInternal();
+        if (!state.selectedSkill) await loadSkillsInternal();
+
+        const skillId =
+          state.selectedSkill?.skillId ||
+          state.selectedSkill?._id ||
+          state.selectedSkill?.id ||
+          DEFAULT_SKILL_ID;
+
+        const config = buildDcaConfig();
+
+        log('PREPARE_INPUT', {
+          userAddress: state.account,
+          smartAccountAddress: state.smartAccountAddress,
+          chainId: BASE_SEPOLIA_ID,
+          skillId,
+          config,
+        });
+
+        step('prepare', 'active', 'Calling /installations/prepare');
+        setBadge('delegationStatus', 'Preparing', 'warn');
+
+        state.prepared = await requestJson('/installations/prepare', {
+          method: 'POST',
+          body: JSON.stringify({
+            userAddress: state.account,
+            smartAccountAddress: state.smartAccountAddress,
+            chainId: BASE_SEPOLIA_ID,
+            skillId,
+            config,
+          }),
+        });
+
+        setText(
+          'prepareValue',
+          state.prepared.prepareId || state.prepared.installationId || 'prepared',
+        );
+        setText('delegateValue', state.prepared.delegate);
+        setJson('prepareOutput', state.prepared);
+
+        setBadge('delegationStatus', 'Prepared', 'ok');
+        step('prepare', 'done', state.prepared.prepareId || 'prepared');
+
+        log('PREPARE_DONE', state.prepared);
+      }
+
+      function getScopeFromPrepare() {
+        if (!state.prepared?.delegationScope) {
+          throw new Error('prepare did not return delegationScope');
+        }
+
+        const scope = state.prepared.delegationScope;
+
+        return {
+          type: state.libs.smartKit.ScopeType.FunctionCall,
+          targets: scope.targets,
+          selectors: scope.selectors,
+          valueLte: { maxValue: 0n },
+        };
+      }
+
+      function normalizeSignedDelegation(delegation, signature) {
+        return {
+          delegate: delegation.delegate ?? delegation.to,
+          delegator: delegation.delegator ?? delegation.from,
+          authority: delegation.authority,
+          caveats: delegation.caveats ?? [],
+          salt: delegation.salt,
+          signature,
+        };
+      }
+
+      async function signDelegationInternal() {
+        if (!state.prepared) await prepareDelegationInternal();
+        if (!state.smartAccount) throw new Error('smart account missing');
+
+        await ensureBaseSepoliaInternal();
+        await ensureAuthorizedAccountInternal();
+        await recreateSmartAccountWithFreshSigner('before sign delegation');
+
+        await loadLibraries();
+
+        step('sign', 'active', 'Waiting for smartAccount.signDelegation');
+        setBadge('delegationStatus', 'Waiting for signature', 'warn');
+
+        const scope = getScopeFromPrepare();
+
+        log('SIGN_DELEGATION_INPUT', {
+          environment: state.smartAccount.environment,
+          from: state.smartAccountAddress,
+          to: state.prepared.delegate,
+          scope,
+        });
+
+        const delegation = state.libs.smartKit.createDelegation({
+          environment: state.smartAccount.environment,
+          from: state.smartAccountAddress,
+          to: state.prepared.delegate,
+          scope,
+        });
+
+        const signature = await state.smartAccount.signDelegation({ delegation });
+
+        state.delegation = delegation;
+        state.signedDelegation = normalizeSignedDelegation(delegation, signature);
+
+        setText('signatureValue', signature ? signature.slice(0, 22) + '…' : 'signed');
+        setBadge('delegationStatus', 'Signed', 'ok');
+        step('sign', 'done', signature ? signature.slice(0, 18) + '…' : 'signed');
+
+        log('SIGN_DELEGATION_DONE', {
+          delegation,
+          signedDelegation: state.signedDelegation,
+        });
+      }
+
+      async function grantInstallationInternal() {
+        if (!state.signedDelegation) await signDelegationInternal();
+
+        step('grant', 'active', 'Calling /installations/grant');
+        setBadge('installStatus', 'Granting', 'warn');
+
+        const body = {
+          userAddress: state.account,
+          smartAccountAddress: state.smartAccountAddress,
+          chainId: BASE_SEPOLIA_ID,
+          permissionPath: 'low-level-function-call-delegation',
+          prepareSnapshot: state.prepared.prepareSnapshot,
+          signedDelegation: state.signedDelegation,
+          raw: {
+            source: 'proof.html',
+            sdk: '@metamask/smart-accounts-kit@1.6.0',
+            flow: 'hybrid-sa-direct-router-dca-function-call',
+          },
+        };
+
+        log('GRANT_INPUT', body);
+
+        state.installation = await requestJson('/installations/grant', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+
+        const installationId = getInstallationId();
+
+        setText('installationValue', installationId);
+        setText(
+          'installationStatusValue',
+          state.installation?.installation?.status || state.installation?.status || 'active',
+        );
+        setJson('grantOutput', state.installation);
+
+        setBadge('installStatus', 'Granted', 'ok');
+        step('grant', 'done', installationId);
+
+        log('GRANT_DONE', state.installation);
+      }
+
+      function getInstallationId() {
+        return (
+          state.installation?.installation?.installationId ||
+          state.installation?.installationId ||
+          state.installation?._id ||
+          ''
+        );
+      }
+
+      async function runInstallationInternal() {
+        if (!getInstallationId()) await grantInstallationInternal();
+
+        const installationId = getInstallationId();
+        if (!installationId) throw new Error('installationId not found after grant');
+
+        step('run', 'active', 'Calling /runtime/run/' + installationId);
+        setBadge('runStatus', 'Running', 'warn');
+
+        state.attempt = await requestJson('/runtime/run/' + installationId, {
+          method: 'POST',
+          headers: adminHeaders(),
+          body: JSON.stringify({ force: true }),
+        });
+
+        const attemptId = getAttemptId();
+        const relay = state.attempt?.relay || state.attempt?.attempt?.relay || {};
+
+        setText('attemptValue', attemptId);
+        setText('taskValue', relay.taskId || '—');
+        setText('hashValue', relay.txHash || '—');
+        setJson('runOutput', state.attempt);
+
+        setBadge('runStatus', 'Submitted', 'ok');
+        step('run', 'done', attemptId || 'submitted');
+
+        log('RUN_DONE', state.attempt);
+
+        if (attemptId) await refreshAttemptInternal();
+      }
+
+      function getAttemptId() {
+        return (
+          state.attempt?.attemptId || state.attempt?.attempt?.attemptId || state.attempt?._id || ''
+        );
+      }
+
+      async function refreshAttemptInternal() {
+        const attemptId = getAttemptId();
+        if (!attemptId) throw new Error('No attemptId. Run installation first.');
+
+        step('attempt', 'active', 'Fetching attempt ' + attemptId);
+
+        state.attempt = await requestJson('/runtime/attempts/' + attemptId);
+
+        const relay = state.attempt?.relay || state.attempt?.attempt?.relay || {};
+
+        setText('taskValue', relay.taskId || '—');
+        setText('hashValue', relay.txHash || '—');
+        setJson('historyOutput', state.attempt);
+
+        setBadge(
+          'historyStatus',
+          state.attempt.status || state.attempt?.attempt?.status || 'attempt',
+          'ok',
+        );
+        step('attempt', 'done', state.attempt.status || state.attempt?.attempt?.status || 'loaded');
+
+        log('ATTEMPT_REFRESHED', state.attempt);
+      }
+
+      async function fetchInstallationInternal() {
+        const installationId = getInstallationId();
+        if (!installationId) throw new Error('No installationId. Grant first.');
+
+        const data = await requestJson('/installations/' + installationId);
+
+        setJson('historyOutput', data);
+        log('INSTALLATION_FETCHED', data);
+      }
+
+      async function fetchMyInstallationsInternal() {
+        if (!state.provider || !state.account) {
+          throw new Error('Click Connect MetaMask first.');
+        }
+
+        const qs = new URLSearchParams({
+          userAddress: state.account,
+          chainId: String(BASE_SEPOLIA_ID),
+        });
+
+        const data = await requestJson('/installations?' + qs.toString());
+
+        setJson('historyOutput', data);
+        log('MY_INSTALLATIONS_FETCHED', data);
+      }
+
+      async function runFullFlowInternal() {
+        await connectWalletInternal();
+        await createSmartAccountInternal();
+        await deploySmartAccountInternal();
+        await loadExecutorInternal();
+        await loadSkillsInternal();
+        await prepareDelegationInternal();
+        await signDelegationInternal();
+        await grantInstallationInternal();
+        await runInstallationInternal();
+      }
+
+      function resetUi() {
+        state.prepared = null;
+        state.delegation = null;
+        state.signedDelegation = null;
+        state.installation = null;
+        state.attempt = null;
+
+        for (const name of ['prepare', 'sign', 'grant', 'run', 'attempt']) {
+          step(name, '', 'Not started');
+        }
+
+        for (const id of [
+          'prepareValue',
+          'delegateValue',
+          'signatureValue',
+          'installationValue',
+          'installationStatusValue',
+          'attemptValue',
+          'taskValue',
+          'hashValue',
+        ]) {
+          setText(id, '—');
+        }
+
+        setBadge('globalStatus', 'Idle');
+        setBadge('delegationStatus', 'Waiting');
+        setBadge('installStatus', 'Waiting');
+        setBadge('runStatus', 'Waiting');
+        setBadge('historyStatus', 'No attempt');
+
+        resetPre('prepareOutput', 'No prepare result yet.');
+        resetPre('grantOutput', 'No grant result yet.');
+        resetPre('runOutput', 'No runtime result yet.');
+        resetPre('historyOutput', 'No history yet.');
+
+        log('UI_RESET');
+      }
+
+      function bind(id, label, fn) {
+        const node = el(id);
+
+        if (!node) {
+          log('BIND_SKIPPED_MISSING_ELEMENT', { id, label });
+          return;
+        }
+
+        node.addEventListener('click', async () => {
+          await runAction(node, label, fn).catch(() => {});
+        });
+      }
+
+      function bindProviderEvents() {
+        if (state.providerEventsBound) return;
+
+        const provider = state.provider || getInjectedProvider();
+        if (!provider?.on) return;
+
+        state.providerEventsBound = true;
+
+        provider.on('accountsChanged', (accounts) => {
+          const nextAccount = accounts?.[0] || '';
+
+          /**
+           * Critical fix:
+           * During Create/Deploy/Sign, never mutate state.account from provider events.
+           * MetaMask Flask can emit account changes while an approval/signing flow is opening.
+           * Mutating here makes SmartAccount owner, walletClient account, and selected account race.
+           */
+          if (state.busy) {
+            log('METAMASK_ACCOUNTS_CHANGED_WHILE_BUSY_IGNORED', {
+              accounts,
+              cachedAccount: state.account,
+              activeAction: state.activeAction,
+            });
+            return;
+          }
+
+          if (!nextAccount) {
+            state.account = '';
+            resetSmartAccountState('MetaMask disconnected account');
+            setText('accountValue', '—');
+            setBadge('walletStatus', 'Disconnected', 'warn');
+            step('connect', '', 'Disconnected');
+            log('METAMASK_ACCOUNTS_CHANGED_EMPTY', { accounts });
+            return;
+          }
+
+          const changed =
+            state.account && state.account.toLowerCase() !== nextAccount.toLowerCase();
+
+          if (changed) {
+            resetSmartAccountState('MetaMask accountsChanged while idle');
+          }
+
+          state.account = nextAccount;
+          setText('accountValue', state.account);
+          setBadge('walletStatus', 'Connected', 'ok');
+
+          log('METAMASK_ACCOUNTS_CHANGED_IDLE_APPLIED', { accounts });
+        });
+
+        provider.on('chainChanged', (chainId) => {
+          const now = Date.now();
+          const previous = state.chainId;
+
+          if (state.lastChainChangedValue === chainId && now - state.lastChainChangedAt < 500) {
+            log('METAMASK_CHAIN_CHANGED_DUPLICATE_IGNORED', {
+              previous,
+              chainId,
+              msSinceLast: now - state.lastChainChangedAt,
+            });
+            return;
+          }
+
+          state.lastChainChangedAt = now;
+          state.lastChainChangedValue = chainId;
+
+          updateDisplayedChain(chainId);
+
+          log(state.busy ? 'METAMASK_CHAIN_CHANGED_WHILE_BUSY' : 'METAMASK_CHAIN_CHANGED', {
+            previous,
+            chainId,
+            expected: BASE_SEPOLIA_HEX,
+            switchingChain: state.switchingChain,
+            activeAction: state.activeAction,
+          });
+
+          /**
+           * IMPORTANT:
+           * Do not reset smart account state on chain flicker.
+           * If chain is wrong, actions will call ensureBaseSepoliaInternal().
+           */
+        });
+
+        provider.on?.('disconnect', (error) => {
+          log('METAMASK_PROVIDER_DISCONNECTED', {
+            message: error?.message,
+            code: error?.code,
+          });
+
+          state.account = '';
+          state.chainId = '';
+          resetSmartAccountState('MetaMask provider disconnected');
+
+          setText('accountValue', '—');
+          setText('chainValue', '—');
+          setBadge('walletStatus', 'Disconnected', 'warn');
+        });
+      }
+
+      function bindEvents() {
+        bind('connectBtn', 'Connecting', connectWalletInternal);
+        bind('smartBtn', 'Creating SA', createSmartAccountInternal);
+        bind('deploySmartBtn', 'Deploying SA', deploySmartAccountInternal);
+        bind('loadExecutorBtn', 'Loading executor', loadExecutorInternal);
+        bind('seedBtn', 'Seeding skills', seedSkillsInternal);
+        bind('loadSkillsBtn', 'Loading skills', loadSkillsInternal);
+        bind('prepareBtn', 'Preparing', prepareDelegationInternal);
+        bind('signBtn', 'Signing', signDelegationInternal);
+        bind('grantBtn', 'Granting', grantInstallationInternal);
+        bind('runBtn', 'Running', runInstallationInternal);
+        bind('refreshAttemptBtn', 'Refreshing attempt', refreshAttemptInternal);
+        bind('fetchInstallationBtn', 'Fetching installation', fetchInstallationInternal);
+        bind('fetchMyInstallationsBtn', 'Fetching installations', fetchMyInstallationsInternal);
+        bind('runAllBtn', 'Running full flow', runFullFlowInternal);
+
+        el('resetBtn')?.addEventListener('click', resetUi);
+
+        el('copyLogsBtn')?.addEventListener('click', async () => {
+          const text = safeStringify(debugLogs, 2);
+          await copyTextToClipboard(text, 'Logs copied');
+          log('DEBUG_LOGS_COPIED');
+        });
+
+        el('copyStateBtn')?.addEventListener('click', async () => {
+          const text = safeStringify(getDebugState(), 2);
+          await copyTextToClipboard(text, 'State copied');
+          log('DEBUG_STATE_COPIED');
+        });
+      }
+
+      window.SkillWalletProof = {
+        state,
+        connectWallet: connectWalletInternal,
+        createSmartAccount: createSmartAccountInternal,
+        deploySmartAccount: deploySmartAccountInternal,
+        loadExecutor: loadExecutorInternal,
+        loadSkills: loadSkillsInternal,
+        prepareDelegation: prepareDelegationInternal,
+        signDelegation: signDelegationInternal,
+        grantInstallation: grantInstallationInternal,
+        runInstallation: runInstallationInternal,
+        refreshAttempt: refreshAttemptInternal,
+        resetUi,
+      };
+
+      window.SkillWalletDebug = {
+        state,
+        logs: debugLogs,
+        getState: getDebugState,
+        copyLogs() {
+          const text = safeStringify(debugLogs, 2);
+          navigator.clipboard?.writeText(text);
+          console.log(text);
+          return text;
+        },
+        copyState() {
+          const text = safeStringify(getDebugState(), 2);
+          navigator.clipboard?.writeText(text);
+          console.log(text);
+          return text;
+        },
+        async forceBaseSepolia() {
+          await ensureBaseSepoliaInternal();
+          return getDebugState();
+        },
+      };
+
+      window.addEventListener('error', (event) => {
+        log('BROWSER_ERROR', {
+          message: event.message,
+          source: event.filename,
+          line: event.lineno,
+          col: event.colno,
+          error: extractErrorDetails(event.error),
+        });
+      });
+
+      window.addEventListener('unhandledrejection', (event) => {
+        log('UNHANDLED_PROMISE_REJECTION', {
+          message: event.reason?.message || String(event.reason),
+          error: extractErrorDetails(event.reason),
+        });
+      });
+
+      function boot() {
+        log('PROOF_VERSION', {
+          version: 'account-adopt-v2',
+          note: 'Adopts MetaMask selected account at action start and recreates Hybrid SA signer before sendUserOperation.',
+        });
+
+        state.provider = getInjectedProvider();
+        bindProviderEvents();
+        bindEvents();
+        log('PROOF_HARNESS_READY');
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot, { once: true });
+      } else {
+        boot();
+      }
+    </script>
+  </body>
 </html>

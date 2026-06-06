@@ -42,7 +42,6 @@ describe('API route smoke e2e', () => {
   beforeAll(async () => {
     process.env.MONGODB_URI = dbUriFor('api-routes');
     process.env.MONGODB_DB_NAME = 'api-routes';
-    process.env.PIMLICO_BUNDLER_URL = 'https://pimlico.test/rpc';
     const { AppModule } = await import('../src/app.module');
 
     oneShot = {
@@ -165,31 +164,6 @@ describe('API route smoke e2e', () => {
       .get(`/installations?userAddress=${TEST_USER}`)
       .expect(200);
     expect(installations.body.data).toEqual([]);
-  });
-
-  it('proxies proof bundler RPC without exposing Pimlico URL to the browser', async () => {
-    const rpcBody = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'pimlico_getUserOperationGasPrice',
-      params: [],
-    };
-    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { fast: { maxFeePerGas: '0x1', maxPriorityFeePerGas: '0x1' } } }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-
-    const res = await request(app.getHttpServer()).post('/proof/bundler-rpc').send(rpcBody).expect(200);
-
-    expect(res.body.result.fast.maxFeePerGas).toBe('0x1');
-    expect(fetchSpy).toHaveBeenCalledWith('https://pimlico.test/rpc', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(rpcBody),
-    });
-    fetchSpy.mockRestore();
   });
 
   it('calls proof task status API', async () => {

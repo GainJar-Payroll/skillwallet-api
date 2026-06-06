@@ -8,14 +8,10 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { getAddress } from 'viem';
-import {
-  Installation,
-  InstallationDocument,
-  ExecutionRecord,
-} from './schemas/installation.schema';
+import { Installation, InstallationDocument, ExecutionRecord } from './schemas/installation.schema';
 import { SkillsService } from '../skills/skills.service';
 import { DelegationService } from '../delegation/delegation.service';
-import { ExecutorService } from '../executor/executor.service';
+import { OneShotService } from '../oneshot/oneshot.service';
 import { PrepareInstallationDto } from './dto/prepare-installation.dto';
 import { ConfirmInstallationDto } from './dto/confirm-installation.dto';
 
@@ -36,50 +32,61 @@ export class InstallationsService {
     private readonly installationModel: Model<InstallationDocument>,
     private readonly skillsService: SkillsService,
     private readonly delegationService: DelegationService,
-    private readonly executorService: ExecutorService,
+    private readonly oneShotService: OneShotService,
   ) {}
 
-  async prepareInstallation(
-    dto: PrepareInstallationDto,
-  ): Promise<PrepareInstallationResponse> {
+  async prepareInstallation(dto: PrepareInstallationDto): Promise<PrepareInstallationResponse> {
     const skill = await this.skillsService.findById(dto.skillId);
+
     if (!skill.isActive) {
       throw new BadRequestException('Skill is not active');
     }
 
     const salt = this.delegationService.generateSalt();
-    const userAddress = getAddress(dto.userAddress) as `0x${string}`;
+
+    const smartAccountAddress = getAddress(dto.smartAccountAddress) as `0x${string}`;
+
+    const oneShotTargetAddress = await this.resolveOneShotTargetAddress(skill.chainId);
+
     const delegation = this.delegationService.prepare(
       skill,
-      userAddress,
+      smartAccountAddress,
       salt,
+      oneShotTargetAddress,
     ) as unknown as Record<string, unknown>;
 
     return {
       delegation,
       salt,
       skillId: dto.skillId,
-      executorAddress: this.executorService.getAddress(),
+      executorAddress: oneShotTargetAddress,
       chainId: skill.chainId,
     };
   }
 
   async confirmInstallation(dto: ConfirmInstallationDto): Promise<Installation> {
     const skill = await this.skillsService.findById(dto.skillId);
+
     const userAddress = getAddress(dto.userAddress) as `0x${string}`;
+    const smartAccountAddress = getAddress(dto.smartAccountAddress) as `0x${string}`;
+
+    const oneShotTargetAddress = await this.resolveOneShotTargetAddress(skill.chainId);
 
     const expected = this.delegationService.prepare(
       skill,
-      userAddress,
+      smartAccountAddress,
       dto.delegationSalt as `0x${string}`,
+      oneShotTargetAddress,
     ) as unknown as Record<string, unknown>;
 
     try {
-      this.delegationService.validateDelegationShape(dto.signedDelegation, userAddress);
-    } catch (err) {
-      throw new BadRequestException(
-        `Invalid delegation signature: ${(err as Error).message}`,
+      this.delegationService.validateDelegationShape(
+        dto.signedDelegation,
+        smartAccountAddress,
+        oneShotTargetAddress,
       );
+    } catch (err) {
+      throw new BadRequestException(`Invalid delegation signature: ${(err as Error).message}`);
     }
 
     if (
@@ -89,8 +96,23 @@ export class InstallationsService {
       throw new BadRequestException('Delegation salt mismatch');
     }
 
+    if (
+      getAddress(dto.signedDelegation.delegator as string) !==
+      getAddress(expected.delegator as string)
+    ) {
+      throw new BadRequestException('Delegation delegator mismatch');
+    }
+
+    if (
+      getAddress(dto.signedDelegation.delegate as string) !==
+      getAddress(expected.delegate as string)
+    ) {
+      throw new BadRequestException('Delegation delegate mismatch');
+    }
+
     const created = await this.installationModel.create({
       userAddress,
+      smartAccountAddress,
       skillId: new Types.ObjectId(dto.skillId),
       signedDelegation: dto.signedDelegation,
       delegationSalt: dto.delegationSalt,
@@ -98,11 +120,13 @@ export class InstallationsService {
       parameters: dto.parameters ?? {},
       status: 'active',
     });
+
     return created.toObject();
   }
 
   async findByUser(userAddress: string): Promise<Installation[]> {
     const checksummed = getAddress(userAddress);
+
     return this.installationModel
       .find({ userAddress: checksummed })
       .populate({
@@ -119,7 +143,9 @@ export class InstallationsService {
       .populate({ path: 'skillId', select: 'name iconUrl runType chainId' })
       .lean()
       .exec();
+
     if (!inst) throw new NotFoundException('Installation not found');
+
     return inst;
   }
 
@@ -141,26 +167,31 @@ export class InstallationsService {
 
   async appendExecution(id: string, record: ExecutionRecord): Promise<void> {
     const doc = await this.installationModel.findById(id).exec();
+
     if (!doc) throw new NotFoundException('Installation not found');
+
     doc.executions.unshift(record);
+
     if (doc.executions.length > 50) {
       doc.executions = doc.executions.slice(0, 50);
     }
+
     doc.lastExecutedAt = record.executedAt;
     doc.markModified('executions');
+
     await doc.save();
   }
 
-  async updateLastExecution(
-    id: string,
-    patch: Partial<ExecutionRecord>,
-  ): Promise<void> {
+  async updateLastExecution(id: string, patch: Partial<ExecutionRecord>): Promise<void> {
     const doc = await this.installationModel.findById(id).exec();
     if (!doc) return;
+
     const target = doc.executions[0];
     if (!target) return;
+
     Object.assign(target, patch);
     doc.markModified('executions');
+
     await doc.save();
   }
 
@@ -172,10 +203,15 @@ export class InstallationsService {
 
   async findDueForExecution(): Promise<Installation[]> {
     const now = new Date();
+
     return this.installationModel
       .find({
         status: 'active',
-        $or: [{ nextExecutionAt: { $lte: now } }, { nextExecutionAt: { $exists: false } }, { nextExecutionAt: null }],
+        $or: [
+          { nextExecutionAt: { $lte: now } },
+          { nextExecutionAt: { $exists: false } },
+          { nextExecutionAt: null },
+        ],
       })
       .populate({ path: 'skillId', select: 'name iconUrl runType chainId' })
       .lean()
@@ -195,12 +231,28 @@ export class InstallationsService {
     status: 'active' | 'paused' | 'revoked',
   ): Promise<Installation> {
     const inst = await this.installationModel.findById(id).exec();
+
     if (!inst) throw new NotFoundException('Installation not found');
+
     if (getAddress(inst.userAddress) !== getAddress(userAddress)) {
       throw new ForbiddenException('Caller is not the owner of this installation');
     }
+
     inst.status = status;
+
     await inst.save();
+
     return inst.toObject();
+  }
+
+  private async resolveOneShotTargetAddress(chainId: number): Promise<`0x${string}`> {
+    const capabilities = await this.oneShotService.getCapabilities(chainId);
+    const chainInfo = capabilities[String(chainId)] as { targetAddress?: string } | undefined;
+
+    if (!chainInfo?.targetAddress) {
+      throw new BadRequestException(`1Shot does not report targetAddress for chainId ${chainId}`);
+    }
+
+    return getAddress(chainInfo.targetAddress) as `0x${string}`;
   }
 }

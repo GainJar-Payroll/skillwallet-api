@@ -7,7 +7,6 @@ import {
   ScopeType,
   type Delegation,
 } from '@metamask/smart-accounts-kit';
-import { ExecutorService } from '../executor/executor.service';
 import { Skill, DelegationScopeConfig } from '../skills/schemas/skill.schema';
 
 const HEX_BIGINT_FIELDS: Array<string | string[]> = [
@@ -18,25 +17,22 @@ const HEX_BIGINT_FIELDS: Array<string | string[]> = [
 
 @Injectable()
 export class DelegationService {
-  constructor(private readonly executorService: ExecutorService) {}
-
   generateSalt(): `0x${string}` {
     return bytesToHex(randomBytes(32)) as `0x${string}`;
   }
 
   prepare(
     skill: Skill,
-    userAddress: `0x${string}`,
+    delegatorAddress: `0x${string}`,
     salt: `0x${string}`,
+    delegateAddress: `0x${string}`,
   ): Delegation {
     const environment = getSmartAccountsEnvironment(skill.chainId);
-    const executorAddress = this.executorService.getAddress();
-
     const scope = this.deserialiseScope(skill.delegationScope);
 
     return createDelegation({
-      to: executorAddress,
-      from: userAddress,
+      to: viemGetAddress(delegateAddress) as `0x${string}`,
+      from: viemGetAddress(delegatorAddress) as `0x${string}`,
       environment,
       salt,
       scope: scope as never,
@@ -45,6 +41,7 @@ export class DelegationService {
 
   deserialiseScope(stored: DelegationScopeConfig): unknown {
     const scopeType = (ScopeType as unknown as Record<string, string>)[stored.type] ?? stored.type;
+
     const result: Record<string, unknown> = { ...stored, type: scopeType };
 
     for (const field of HEX_BIGINT_FIELDS) {
@@ -56,28 +53,40 @@ export class DelegationService {
       } else {
         const [parent, child] = field;
         const container = result[parent] as Record<string, unknown> | undefined;
-        if (container && typeof container[child] === 'string' && (container[child] as string).startsWith('0x')) {
+        if (
+          container &&
+          typeof container[child] === 'string' &&
+          (container[child] as string).startsWith('0x')
+        ) {
           container[child] = BigInt(container[child] as string);
         }
       }
     }
+
     return result;
   }
 
   validateDelegationShape(
     delegation: Record<string, unknown>,
-    expectedSigner: `0x${string}`,
+    expectedDelegator: `0x${string}`,
+    expectedDelegate: `0x${string}`,
   ): void {
     if (!delegation.signature || (delegation.signature as string) === '0x') {
       throw new Error('Missing delegation signature');
     }
+
     const delegate = viemGetAddress(delegation.delegate as string);
-    if (delegate !== viemGetAddress(this.executorService.getAddress())) {
-      throw new Error('Delegation delegate does not match executor');
+    if (delegate !== viemGetAddress(expectedDelegate)) {
+      throw new Error(
+        `Delegation delegate mismatch. Expected ${expectedDelegate}, got ${delegate}`,
+      );
     }
+
     const delegator = viemGetAddress(delegation.delegator as string);
-    if (delegator !== viemGetAddress(expectedSigner)) {
-      throw new Error('Delegation delegator does not match user');
+    if (delegator !== viemGetAddress(expectedDelegator)) {
+      throw new Error(
+        `Delegation delegator mismatch. Expected ${expectedDelegator}, got ${delegator}`,
+      );
     }
   }
 }
