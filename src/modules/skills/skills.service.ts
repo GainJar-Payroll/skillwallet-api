@@ -1,19 +1,38 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { EventTriggerConfig, Skill, SkillDocument } from './schemas/skill.schema';
+import { FilterQuery, Model } from 'mongoose';
+import { Skill, SkillDocument } from './schemas/skill.schema';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
 
+export interface FindSkillsOptions {
+  onlyActive?: boolean;
+  chainId?: number;
+}
+
 @Injectable()
 export class SkillsService {
-  constructor(
-    @InjectModel(Skill.name) private readonly skillModel: Model<SkillDocument>,
-  ) {}
+  constructor(@InjectModel(Skill.name) private readonly skillModel: Model<SkillDocument>) {}
 
-  async findAll(onlyActive = true): Promise<Skill[]> {
-    const filter = onlyActive ? { isActive: true } : {};
-    return this.skillModel.find(filter).lean().exec();
+  async findAll(options: boolean | FindSkillsOptions = true): Promise<Skill[]> {
+    const normalized: FindSkillsOptions =
+      typeof options === 'boolean' ? { onlyActive: options } : options;
+
+    const filter: FilterQuery<SkillDocument> = {};
+
+    if (normalized.onlyActive ?? true) {
+      filter.isActive = true;
+    }
+
+    if (normalized.chainId !== undefined) {
+      if (!Number.isInteger(normalized.chainId)) {
+        throw new BadRequestException('chainId must be an integer');
+      }
+
+      filter.chainId = normalized.chainId;
+    }
+
+    return this.skillModel.find(filter).sort({ name: 1, chainId: 1 }).lean().exec();
   }
 
   async findById(id: string): Promise<Skill> {
@@ -28,7 +47,12 @@ export class SkillsService {
 
   async create(dto: CreateSkillDto): Promise<Skill> {
     this.validateRunType(dto);
-    const created = await this.skillModel.create(dto);
+
+    const created = await this.skillModel.create({
+      ...dto,
+      isActive: dto.isActive ?? true,
+    });
+
     return created.toObject();
   }
 
@@ -51,10 +75,12 @@ export class SkillsService {
       metadata: dto.metadata ?? existing.metadata,
       isActive: dto.isActive ?? existing.isActive,
     };
+
     this.validateRunType(merged);
 
     Object.assign(existing, dto);
     await existing.save();
+
     return existing.toObject();
   }
 
@@ -62,13 +88,21 @@ export class SkillsService {
     const updated = await this.skillModel
       .findByIdAndUpdate(id, { isActive: false }, { new: true })
       .exec();
+
     if (!updated) throw new NotFoundException('Skill not found');
   }
 
   async upsertByName(name: string, payload: CreateSkillDto): Promise<Skill> {
+    this.validateRunType(payload);
+
     const updated = await this.skillModel
-      .findOneAndUpdate({ name }, { $set: payload }, { new: true, upsert: true })
+      .findOneAndUpdate(
+        { name, chainId: payload.chainId },
+        { $set: { ...payload, isActive: payload.isActive ?? true } },
+        { new: true, upsert: true },
+      )
       .exec();
+
     return updated!.toObject();
   }
 
@@ -76,6 +110,7 @@ export class SkillsService {
     if (dto.runType === 'cron' && !dto.cronExpression) {
       throw new BadRequestException('cronExpression is required for runType "cron"');
     }
+
     if (dto.runType === 'event-trigger' && !dto.eventTriggerConfig) {
       throw new BadRequestException('eventTriggerConfig is required for runType "event-trigger"');
     }

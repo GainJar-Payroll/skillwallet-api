@@ -56,9 +56,9 @@ describe('OneShotService', () => {
   describe('getFeeData', () => {
     it('passes chainId + token', async () => {
       const calls = mockFetchSequence([{ ok: true, status: 200, json: () => ({ result: { fee: '1000' } }) }]);
-      const out = await service.getFeeData(84532, '0xToken' as `0x${string}`);
+      const out = await service.getFeeData({ chainId: 84532, token: '0xToken' as `0x${string}` });
       expect(out).toEqual({ fee: '1000' });
-      expect(calls[0].body.params).toEqual([84532, '0xToken']);
+      expect(calls[0].body.params).toEqual({ chainId: '84532', token: '0xToken' });
     });
   });
 

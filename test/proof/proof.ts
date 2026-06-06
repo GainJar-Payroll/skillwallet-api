@@ -24,7 +24,9 @@ import { privateKeyToAccount } from 'viem/accounts';
  *
  * This proof assumes the Hybrid Smart Account is already deployed.
  * Deployment is not done here because Hybrid SA deploy is ERC-4337 UserOperation flow.
- * 1Shot is used by backend runtime when /admin/installations/:id/trigger executes.
+ *
+ * 1Shot is used by backend runtime when:
+ *   POST /admin/installations/:id/trigger
  *
  * Current backend flow:
  *   GET  /admin/executor                         x-api-key required
@@ -40,10 +42,16 @@ import { privateKeyToAccount } from 'viem/accounts';
  *   BASE_SEPOLIA_RPC_URL
  *   DEFAULT_CHAIN_ID
  *   PROOF_PRIVATE_KEY
+ *   ONESHOT_RELAYER_URL                          optional, defaults to 1Shot dev relayer
  *
  * Removed:
  *   PIMLICO_BUNDLER_URL
  *   SPONSORSHIP_POLICY_ID
+ *
+ * Important:
+ * - Delegation delegator MUST be Hybrid Smart Account address.
+ * - Delegation delegate MUST be 1Shot relayer targetAddress.
+ * - The executor EOA is NOT the delegation delegate for 1Shot flow.
  */
 
 const PORT = Number(process.env.PORT ?? '3000');
@@ -53,6 +61,11 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL;
 const DEFAULT_CHAIN_ID = Number(process.env.DEFAULT_CHAIN_ID ?? '84532');
 const PROOF_PRIVATE_KEY = process.env.PROOF_PRIVATE_KEY! as Hex;
+
+const ONESHOT_RELAYER_URL =
+  process.env.ONESHOT_RELAYER_URL ??
+  process.env.RELAYER_URL ??
+  'https://relayer.1shotapi.dev/relayers';
 
 if (!BASE_SEPOLIA_RPC_URL) throw new Error('Missing BASE_SEPOLIA_RPC_URL');
 if (!ADMIN_API_KEY) throw new Error('Missing ADMIN_API_KEY');
@@ -72,7 +85,8 @@ if (DEFAULT_CHAIN_ID !== baseSepolia.id) {
   throw new Error(`This proof expects DEFAULT_CHAIN_ID=84532, got ${DEFAULT_CHAIN_ID}`);
 }
 
-const DEPLOY_SALT = '0x0000000000000000000000000000000000000000000000000000000000000888' as const;
+const DEPLOY_SALT =
+  '0x0000000000000000000000000000000000000000000000000000000000000888' as const;
 
 const PREFERRED_SKILL_ID = 'direct-router-dca';
 
@@ -86,8 +100,27 @@ const MAX_SLIPPAGE_BPS = 50;
 const FREQUENCY = 'daily';
 
 const POLL_AFTER_TRIGGER = true;
-const POLL_INTERVAL_MS = 3000;
+const POLL_INTERVAL_MS = 10_000;
 const POLL_TIMEOUT_MS = 180_000;
+
+type JsonRpcResponse<T> = {
+  jsonrpc?: '2.0';
+  id?: number | string;
+  result?: T;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
+};
+
+type OneShotChainInfo = {
+  chainId?: string | number;
+  feeCollector?: Address;
+  targetAddress?: Address;
+  tokens?: unknown[];
+  [key: string]: unknown;
+};
 
 type BackendCaveat = {
   enforcer: Address;
@@ -303,6 +336,98 @@ async function requestJson<T>(path: string, options: RequestInit = {}): Promise<
   return (body?.payload ?? body?.data ?? body) as T;
 }
 
+async function oneShotRpc<T>(method: string, params: unknown, id = 1): Promise<T> {
+  const body = {
+    jsonrpc: '2.0' as const,
+    id,
+    method,
+    params,
+  };
+
+  log('ONESHOT_RPC_REQUEST', {
+    url: redactUrl(ONESHOT_RELAYER_URL),
+    method,
+    params,
+  });
+
+  const res = await fetch(ONESHOT_RELAYER_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const text = await res.text();
+
+  let json: JsonRpcResponse<T>;
+
+  try {
+    json = JSON.parse(text) as JsonRpcResponse<T>;
+  } catch {
+    throw new Error(`1Shot invalid JSON response: ${text}`);
+  }
+
+  log('ONESHOT_RPC_RESPONSE', {
+    url: redactUrl(ONESHOT_RELAYER_URL),
+    status: res.status,
+    ok: res.ok,
+    body: json,
+  });
+
+  if (!res.ok) {
+    throw new Error(`1Shot HTTP ${res.status}: ${stringify(json)}`);
+  }
+
+  if (json.error) {
+    throw new Error(
+      `1Shot JSON-RPC ${json.error.code}: ${json.error.message} ${stringify(
+        json.error.data ?? '',
+      )}`,
+    );
+  }
+
+  if (json.result === undefined) {
+    throw new Error(`1Shot missing result: ${stringify(json)}`);
+  }
+
+  return json.result;
+}
+
+async function getOneShotChainInfo(chainId: number): Promise<OneShotChainInfo> {
+  const capabilities = await oneShotRpc<Record<string, unknown>>(
+    'relayer_getCapabilities',
+    [String(chainId)],
+    1,
+  );
+
+  const direct = capabilities[String(chainId)] as OneShotChainInfo | undefined;
+
+  if (direct?.targetAddress) {
+    return {
+      chainId,
+      ...direct,
+      targetAddress: getAddress(direct.targetAddress),
+      feeCollector: direct.feeCollector ? getAddress(direct.feeCollector) : undefined,
+    };
+  }
+
+  const chains = (capabilities as any)?.chains ?? [];
+  const found = chains.find((item: any) => String(item.chainId) === String(chainId));
+
+  if (found?.targetAddress) {
+    return {
+      ...found,
+      targetAddress: getAddress(found.targetAddress),
+      feeCollector: found.feeCollector ? getAddress(found.feeCollector) : undefined,
+    };
+  }
+
+  throw new Error(
+    `1Shot does not expose targetAddress for chainId=${chainId}. Capabilities=${stringify(
+      capabilities,
+    )}`,
+  );
+}
+
 async function assertCode(label: string, address: Address) {
   const code = await publicClient.getCode({ address });
 
@@ -409,8 +534,9 @@ function buildDelegationToSign(params: {
   prepared: PrepareResponse;
   smartAccount: any;
   smartAccountAddress: Address;
+  oneShotTargetAddress: Address;
 }) {
-  const { prepared, smartAccount, smartAccountAddress } = params;
+  const { prepared, smartAccount, smartAccountAddress, oneShotTargetAddress } = params;
 
   if (prepared.delegation) {
     const d = prepared.delegation;
@@ -435,9 +561,48 @@ function buildDelegationToSign(params: {
       throw new Error(`prepared.delegation.caveats missing: ${stringify(prepared)}`);
     }
 
+    const backendDelegator = getAddress(d.delegator);
+    const expectedDelegator = getAddress(smartAccountAddress);
+
+    if (backendDelegator !== expectedDelegator) {
+      throw new Error(
+        [
+          'prepared.delegation.delegator mismatch.',
+          `Backend returned delegator=${backendDelegator}`,
+          `Expected Hybrid Smart Account=${expectedDelegator}`,
+          '',
+          'Backend /installations/prepare must use:',
+          '  from: smartAccountAddress',
+          'not:',
+          '  from: userAddress / EOA',
+        ].join('\n'),
+      );
+    }
+
+    const backendDelegate = getAddress(d.delegate);
+    const expectedDelegate = getAddress(oneShotTargetAddress);
+
+    if (backendDelegate !== expectedDelegate) {
+      throw new Error(
+        [
+          'prepared.delegation.delegate mismatch.',
+          `Backend returned delegate=${backendDelegate}`,
+          `Expected 1Shot targetAddress=${expectedDelegate}`,
+          '',
+          'This is the real cause of the 1Shot error:',
+          `"First delegation's delegate must be the relayer Target wallet".`,
+          '',
+          'Backend /installations/prepare must create delegation with:',
+          '  to: oneShot chainInfo.targetAddress',
+          'not:',
+          '  to: executorService.getAddress()',
+        ].join('\n'),
+      );
+    }
+
     const delegation = {
-      delegate: getAddress(d.delegate),
-      delegator: getAddress(d.delegator),
+      delegate: backendDelegate,
+      delegator: backendDelegator,
       authority: d.authority,
       caveats: d.caveats,
       salt: d.salt,
@@ -448,8 +613,9 @@ function buildDelegationToSign(params: {
       backendDelegator: d.delegator,
       signingDelegator: delegation.delegator,
       smartAccountAddress,
-      note: 'Proof signs prepared.delegation as returned by backend.',
-      delegate: delegation.delegate,
+      backendDelegate,
+      oneShotTargetAddress,
+      note: 'Proof signs prepared.delegation exactly as returned by backend. No silent override.',
       caveatsCount: delegation.caveats.length,
       salt: delegation.salt,
     });
@@ -461,10 +627,25 @@ function buildDelegationToSign(params: {
   }
 
   if (prepared.delegate && prepared.delegationScope) {
+    const backendDelegate = getAddress(prepared.delegate);
+    const expectedDelegate = getAddress(oneShotTargetAddress);
+
+    if (backendDelegate !== expectedDelegate) {
+      throw new Error(
+        [
+          'prepared.delegate mismatch.',
+          `Backend returned delegate=${backendDelegate}`,
+          `Expected 1Shot targetAddress=${expectedDelegate}`,
+          '',
+          'Backend must return the 1Shot target wallet as delegate.',
+        ].join('\n'),
+      );
+    }
+
     const delegation = createDelegation({
       environment: smartAccount.environment,
       from: smartAccountAddress,
-      to: getAddress(prepared.delegate),
+      to: backendDelegate,
       scope: getScopeFromPrepare(prepared),
     });
 
@@ -601,6 +782,7 @@ async function main() {
     API_BASE_URL,
     ADMIN_API_KEY: 'REDACTED',
     BASE_SEPOLIA_RPC_URL: redactUrl(BASE_SEPOLIA_RPC_URL),
+    ONESHOT_RELAYER_URL: redactUrl(ONESHOT_RELAYER_URL),
     DEFAULT_CHAIN_ID,
     PROOF_PRIVATE_KEY: 'REDACTED',
     PREFERRED_SKILL_ID,
@@ -616,13 +798,24 @@ async function main() {
     POLL_TIMEOUT_MS,
   });
 
-  step('0. Sanity check contracts and admin executor');
+  step('0. Sanity check contracts, admin executor, and 1Shot target');
 
   await assertCode('USDC', USDC);
   await assertCode('WETH', WETH);
   await assertCode('SwapRouter02', SWAP_ROUTER_02);
 
   const adminExecutor = await maybeGetAdminExecutor();
+
+  const oneShotChainInfo = await getOneShotChainInfo(DEFAULT_CHAIN_ID);
+  const oneShotTargetAddress = getAddress(oneShotChainInfo.targetAddress!);
+
+  log('ONESHOT_CHAIN_INFO_LOADED', {
+    chainId: DEFAULT_CHAIN_ID,
+    oneShotChainInfo,
+    oneShotTargetAddress,
+    adminExecutorAddress: adminExecutor?.address,
+    note: 'Delegation delegate must equal oneShotTargetAddress, not admin executor EOA.',
+  });
 
   step('1. Load owner from PROOF_PRIVATE_KEY');
 
@@ -729,6 +922,7 @@ async function main() {
     prepared,
     smartAccount,
     smartAccountAddress,
+    oneShotTargetAddress,
   });
 
   log('DELEGATION_TO_SIGN', { source, delegation });
@@ -764,6 +958,7 @@ async function main() {
   const confirmInput = {
     userAddress: owner,
     smartAccountAddress,
+    chainId: DEFAULT_CHAIN_ID,
     skillId,
     signedDelegation,
     delegationSalt,

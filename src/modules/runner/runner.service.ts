@@ -5,11 +5,11 @@ import { getChainConfig, ChainConfig } from '../../config/chains.config';
 import { Skill } from '../skills/schemas/skill.schema';
 import { SkillsService } from '../skills/skills.service';
 import { InstallationsService } from '../installations/installations.service';
-import { OneShotService, OneShotExecution, OneShotStatus } from '../oneshot/oneshot.service';
+import { OneShotExecution, OneShotService, OneShotStatus } from '../oneshot/oneshot.service';
 import { X402Service } from '../x402/x402.service';
 import { VeniceService } from '../venice/venice.service';
-import { Installation, ExecutionRecord } from '../installations/schemas/installation.schema';
-import { SWAP_ROUTER_02_ABI, GM_ABI } from './abis';
+import { ExecutionRecord, Installation } from '../installations/schemas/installation.schema';
+import { GM_ABI, SWAP_ROUTER_02_ABI } from './abis';
 
 const FEE_AMOUNT_ATOMS = 10_000n;
 
@@ -57,8 +57,8 @@ export class RunnerService {
     }
 
     const capabilities = await this.oneShotService.getCapabilities(installation.chainId);
-
     const chainKey = String(installation.chainId);
+
     const chainInfo = capabilities[chainKey] as
       | { feeCollector?: `0x${string}`; targetAddress?: `0x${string}` }
       | undefined;
@@ -147,10 +147,15 @@ export class RunnerService {
       }>(this.config.get<string>('ottoAiNewsUrl')!);
 
       newsContext = news.headlines ?? news.content ?? JSON.stringify(news).slice(0, 500);
-
       aiContext = await this.veniceService.summariseMarketContext(newsContext);
     } catch (err) {
       this.logger.warn(`DCA context enrichment failed: ${(err as Error).message}`);
+    }
+
+    if (!installation.smartAccountAddress) {
+      throw new Error(
+        `Installation ${String((installation as any)._id)} has no smartAccountAddress`,
+      );
     }
 
     const parameters = installation.parameters ?? {};
@@ -173,9 +178,7 @@ export class RunnerService {
     const feeTier = Number(parameters['feeTier'] ?? 500);
 
     const recipient = getAddress(
-      String(
-        parameters['recipient'] ?? installation.smartAccountAddress ?? installation.userAddress,
-      ),
+      String(parameters['recipient'] ?? installation.smartAccountAddress),
     ) as `0x${string}`;
 
     const approveCalldata = encodeFunctionData({
@@ -219,7 +222,7 @@ export class RunnerService {
   }
 
   async buildGmExecutions(
-    installation: Installation,
+    _installation: Installation,
     chainConfig: ChainConfig,
   ): Promise<OneShotExecution[]> {
     const gmCalldata = encodeFunctionData({

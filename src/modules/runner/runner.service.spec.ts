@@ -41,7 +41,7 @@ describe('RunnerService', () => {
     };
     oneShot = {
       getCapabilities: jest.fn().mockResolvedValue({
-        '84532': { feeCollector: FEE_COLLECTOR },
+        '84532': { feeCollector: FEE_COLLECTOR, targetAddress: FEE_COLLECTOR },
       }),
       send7710Transaction: jest.fn().mockResolvedValue('0x' + 'aa'.repeat(32)),
       poll: jest.fn().mockResolvedValue({ status: 200, hash: '0xH' }),

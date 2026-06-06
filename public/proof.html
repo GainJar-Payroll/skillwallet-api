@@ -489,12 +489,20 @@
 
             <div class="field">
               <label for="paymasterUrlInput">Paymaster URL</label>
-              <input id="paymasterUrlInput" placeholder="usually same as bundler URL" value="https://api.pimlico.io/v2/84532/rpc?apikey=pim_6nVf8zJFiq6mdBjgPTHCFf" />
+              <input
+                id="paymasterUrlInput"
+                placeholder="usually same as bundler URL"
+                value="https://api.pimlico.io/v2/84532/rpc?apikey=pim_6nVf8zJFiq6mdBjgPTHCFf"
+              />
             </div>
 
             <div class="field">
               <label for="sponsorshipPolicyInput">Sponsorship policy ID</label>
-              <input id="sponsorshipPolicyInput" placeholder="sp_..." value="sp_milky_cassandra_nova" />
+              <input
+                id="sponsorshipPolicyInput"
+                placeholder="sp_..."
+                value="sp_milky_cassandra_nova"
+              />
             </div>
 
             <p class="muted">
@@ -688,7 +696,7 @@
               <span class="badge" id="installStatus">Waiting</span>
             </div>
 
-            <button class="btn" id="grantBtn" type="button">POST /installations/grant</button>
+            <button class="btn" id="grantBtn" type="button">POST /installations/confirm</button>
 
             <div class="rows">
               <div class="row">
@@ -712,7 +720,7 @@
 
             <div class="cluster">
               <button class="btn" id="runBtn" type="button">
-                POST /runtime/run/:installationId
+                POST /admin/installations/:id/trigger
               </button>
               <button class="btn secondary" id="refreshAttemptBtn" type="button">
                 Refresh attempt
@@ -767,7 +775,6 @@
         </section>
       </main>
     </div>
-
     <script type="module">
       const BASE_SEPOLIA_ID = 84532;
       const BASE_SEPOLIA_HEX = '0x14a34';
@@ -788,6 +795,13 @@
 
       const DEFAULT_SKILL_ID = 'direct-router-dca';
 
+      const DEFAULT_ONESHOT_RELAYER_URL =
+        window.SkillWalletProofConfig?.oneShotRelayerUrl ||
+        'https://relayer.1shotapi.dev/relayers';
+
+      const POLL_INTERVAL_MS = 10_000;
+      const POLL_TIMEOUT_MS = 180_000;
+
       const state = {
         provider: null,
         walletClient: null,
@@ -802,11 +816,16 @@
         skills: [],
         selectedSkill: null,
         executor: null,
+        oneShotChainInfo: null,
+        oneShotTargetAddress: '',
+
         prepared: null,
         delegation: null,
         signedDelegation: null,
+
         installation: null,
-        attempt: null,
+        triggerResult: null,
+        latestInstallation: null,
 
         libs: null,
 
@@ -829,12 +848,23 @@
         return new Promise((resolve) => setTimeout(resolve, ms));
       }
 
+      function bytesToHex(bytes) {
+        return (
+          '0x' +
+          Array.from(bytes)
+            .map((x) => x.toString(16).padStart(2, '0'))
+            .join('')
+        );
+      }
+
       function safeStringify(value, space = 2) {
         try {
           return JSON.stringify(
             value,
             (_k, v) => {
               if (typeof v === 'bigint') return v.toString();
+
+              if (v instanceof Uint8Array) return bytesToHex(v);
 
               if (v instanceof Error) {
                 return {
@@ -974,10 +1004,14 @@
           busy: state.busy,
           activeAction: state.activeAction,
           selectedSkill: state.selectedSkill,
+          executor: state.executor,
+          oneShotChainInfo: state.oneShotChainInfo,
+          oneShotTargetAddress: state.oneShotTargetAddress,
           prepared: state.prepared,
           signedDelegation: state.signedDelegation,
           installation: state.installation,
-          attempt: state.attempt,
+          triggerResult: state.triggerResult,
+          latestInstallation: state.latestInstallation,
         };
       }
 
@@ -1089,10 +1123,7 @@
       }
 
       async function requestJson(path, options = {}) {
-        const headers = Object.assign(
-          { 'content-type': 'application/json' },
-          options.headers || {},
-        );
+        const headers = Object.assign({ 'content-type': 'application/json' }, options.headers || {});
 
         let parsedBody;
         try {
@@ -1131,12 +1162,77 @@
         });
 
         if (!res.ok) {
-          const message =
-            body?.error?.message || body?.message || body?.raw || 'HTTP ' + res.status;
+          const message = body?.error?.message || body?.message || body?.raw || 'HTTP ' + res.status;
           throw new Error(Array.isArray(message) ? message.join(', ') : message);
         }
 
-        return body?.payload ?? body?.data ?? body;
+        return body?.payload ?? body;
+      }
+
+      async function oneShotRpc(method, params, id = 1) {
+        const payload = {
+          jsonrpc: '2.0',
+          id,
+          method,
+          params,
+        };
+
+        return rpcPost(DEFAULT_ONESHOT_RELAYER_URL, payload, method);
+      }
+
+      async function loadOneShotChainInfoInternal() {
+        try {
+          const json = await oneShotRpc('relayer_getCapabilities', [String(BASE_SEPOLIA_ID)], 1);
+          const capabilities = json.result ?? json;
+
+          const direct = capabilities?.[String(BASE_SEPOLIA_ID)];
+
+          if (direct?.targetAddress) {
+            state.oneShotChainInfo = direct;
+            state.oneShotTargetAddress = direct.targetAddress;
+
+            log('ONESHOT_CHAIN_INFO_LOADED', {
+              chainId: BASE_SEPOLIA_ID,
+              oneShotChainInfo: direct,
+              oneShotTargetAddress: state.oneShotTargetAddress,
+              note: 'Delegation delegate must equal this targetAddress, not executor EOA.',
+            });
+
+            return direct;
+          }
+
+          const chains = capabilities?.chains ?? [];
+          const found = chains.find((item) => String(item.chainId) === String(BASE_SEPOLIA_ID));
+
+          if (found?.targetAddress) {
+            state.oneShotChainInfo = found;
+            state.oneShotTargetAddress = found.targetAddress;
+
+            log('ONESHOT_CHAIN_INFO_LOADED_FROM_CHAINS_ARRAY', {
+              chainId: BASE_SEPOLIA_ID,
+              oneShotChainInfo: found,
+              oneShotTargetAddress: state.oneShotTargetAddress,
+            });
+
+            return found;
+          }
+
+          throw new Error(
+            '1Shot capabilities did not include targetAddress for chain ' +
+              BASE_SEPOLIA_ID +
+              ': ' +
+              safeStringify(capabilities),
+          );
+        } catch (err) {
+          log('ONESHOT_CHAIN_INFO_LOAD_FAILED_NON_FATAL', {
+            error: extractErrorDetails(err),
+            note: 'Browser CORS may block direct relayer call. Flow can continue, but delegate target validation will be skipped in proof.html.',
+          });
+
+          state.oneShotChainInfo = null;
+          state.oneShotTargetAddress = '';
+          return null;
+        }
       }
 
       async function loadLibraries() {
@@ -1167,6 +1263,7 @@
 
         if (Array.isArray(ethereum.providers)) {
           const metamasks = ethereum.providers.filter((provider) => provider.isMetaMask);
+
           if (metamasks.length > 1) {
             log('MULTIPLE_METAMASK_PROVIDERS_DETECTED', {
               count: metamasks.length,
@@ -1379,15 +1476,6 @@
         }
       }
 
-      /**
-       * IMPORTANT:
-       * Only Connect MetaMask may request account permission.
-       * Create/Deploy/Sign only validate existing authorization.
-       *
-       * Even more important for MetaMask Flask:
-       * Do NOT silently switch from cached account to accounts[0] during an action.
-       * If MetaMask changes selected account mid-flow, stop early with a clear error.
-       */
       async function getProviderAccounts(label = 'ETH_ACCOUNTS_CHECK') {
         if (!state.provider) throw new Error('provider missing');
 
@@ -1423,19 +1511,7 @@
         return lastAccounts;
       }
 
-      /**
-       * MetaMask Flask can emit selected-account changes around permission/signing UI.
-       * For this proof harness, the safest behavior is:
-       * - Connect may request permission.
-       * - Other actions may adopt the currently selected authorized account at ACTION START.
-       * - If account changes, reset derived Smart Account state and rebuild from the new account.
-       *
-       * This avoids stale cached account -> wallet selected account mismatch, which caused 4100.
-       */
-      async function ensureAuthorizedAccountInternal({
-        allowRequest = false,
-        adoptSelected = true,
-      } = {}) {
+      async function ensureAuthorizedAccountInternal({ allowRequest = false, adoptSelected = true } = {}) {
         if (!state.provider) throw new Error('provider missing');
 
         const libs = await loadLibraries();
@@ -1833,9 +1909,7 @@
         log('DEPLOY_START', getDebugState());
 
         if (!state.provider || !state.account) {
-          throw new Error(
-            'Click Connect MetaMask first. Deploy will not request account permission.',
-          );
+          throw new Error('Click Connect MetaMask first. Deploy will not request account permission.');
         }
 
         await ensureBaseSepoliaInternal();
@@ -1870,9 +1944,7 @@
           bundlerUrl: redactUrl(bundlerUrl),
           paymasterUrl: redactUrl(paymasterUrl),
           hasSponsorshipPolicyId: Boolean(sponsorshipPolicyId),
-          sponsorshipPolicyIdPrefix: sponsorshipPolicyId
-            ? sponsorshipPolicyId.slice(0, 10) + '…'
-            : '',
+          sponsorshipPolicyIdPrefix: sponsorshipPolicyId ? sponsorshipPolicyId.slice(0, 10) + '…' : '',
           smartAccountAddress: state.smartAccountAddress,
           owner: state.account,
           chainId: state.chainId,
@@ -1915,7 +1987,7 @@
         await recreateSmartAccountWithFreshSigner('immediately before sendUserOperation');
 
         const deployCall = {
-          to: state.account,
+          to: state.smartAccountAddress,
           value: 0n,
           data: '0x',
         };
@@ -2004,12 +2076,21 @@
 
       async function loadExecutorInternal() {
         try {
-          const data = await requestJson('/executor/address');
+          const adminKey = el('adminKeyInput')?.value?.trim() || '';
+          const path = adminKey ? '/admin/executor' : '/executor/address';
+
+          const data = await requestJson(path, {
+            method: 'GET',
+            headers: adminKey ? adminHeaders() : {},
+          });
 
           state.executor = data;
           setText('executorValue', data.address || data.executorAddress || safeStringify(data));
 
-          log('EXECUTOR_LOADED', data);
+          log('EXECUTOR_LOADED', {
+            path,
+            data,
+          });
 
           return data;
         } catch (err) {
@@ -2042,11 +2123,27 @@
         return [];
       }
 
+      function getSkillIdentifier(skill) {
+        return skill?.skillId || skill?._id || skill?.id || '';
+      }
+
       async function loadSkillsInternal() {
         step('skills', 'active', 'Fetching /skills');
         setBadge('skillsStatus', 'Loading', 'warn');
 
-        const body = await requestJson('/skills');
+        const qs = new URLSearchParams({
+          chainId: String(BASE_SEPOLIA_ID),
+          active: 'true',
+        });
+
+        let body;
+        try {
+          body = await requestJson('/skills?' + qs.toString());
+        } catch (err) {
+          log('SKILLS_CHAIN_FILTER_FAILED_FALLBACK_TO_DEFAULT', extractErrorDetails(err));
+          body = await requestJson('/skills');
+        }
+
         state.skills = normalizeSkillsResponse(body);
 
         const select = el('skillSelect');
@@ -2070,28 +2167,32 @@
         }
 
         for (const skill of state.skills) {
-          const id = skill.skillId || skill._id || skill.id;
+          const id = getSkillIdentifier(skill);
 
           const option = document.createElement('option');
           option.value = id;
-          option.textContent = (skill.name || id) + ' · ' + id;
+          option.textContent = (skill.name || id) + ' · ' + id + ' · chain ' + skill.chainId;
 
           select.appendChild(option);
         }
 
         const preferred =
-          state.skills.find((s) => (s.skillId || s._id || s.id) === DEFAULT_SKILL_ID) ||
-          state.skills.find((s) => String(s.skillId || s._id || s.id).includes('dca')) ||
+          state.skills.find((s) => getSkillIdentifier(s) === DEFAULT_SKILL_ID) ||
+          state.skills.find((s) => String(s?.metadata?.kind || '').toLowerCase() === 'dca') ||
+          state.skills.find((s) =>
+            String(s?.name || '')
+              .toLowerCase()
+              .includes('dca'),
+          ) ||
           state.skills[0];
 
         state.selectedSkill = preferred;
-        select.value = preferred.skillId || preferred._id || preferred.id;
+        select.value = getSkillIdentifier(preferred);
 
         setText('selectedSkillValue', select.value);
 
         select.onchange = () => {
-          state.selectedSkill =
-            state.skills.find((s) => (s.skillId || s._id || s.id) === select.value) || null;
+          state.selectedSkill = state.skills.find((s) => getSkillIdentifier(s) === select.value) || null;
 
           setText('selectedSkillValue', select.value);
           log('SKILL_SELECTED', state.selectedSkill);
@@ -2128,12 +2229,9 @@
         if (!state.smartAccountDeployed) await deploySmartAccountInternal();
         if (!state.selectedSkill) await loadSkillsInternal();
 
-        const skillId =
-          state.selectedSkill?.skillId ||
-          state.selectedSkill?._id ||
-          state.selectedSkill?.id ||
-          DEFAULT_SKILL_ID;
+        await loadOneShotChainInfoInternal();
 
+        const skillId = getSkillIdentifier(state.selectedSkill) || DEFAULT_SKILL_ID;
         const config = buildDcaConfig();
 
         log('PREPARE_INPUT', {
@@ -2158,17 +2256,35 @@
           }),
         });
 
+        const preparedDelegation = state.prepared?.delegation;
+
         setText(
           'prepareValue',
-          state.prepared.prepareId || state.prepared.installationId || 'prepared',
+          state.prepared.prepareId ||
+            state.prepared.installationId ||
+            state.prepared.salt ||
+            preparedDelegation?.salt ||
+            'prepared',
         );
-        setText('delegateValue', state.prepared.delegate);
+
+        setText(
+          'delegateValue',
+          preparedDelegation?.delegate || state.prepared.delegate || state.prepared.executorAddress || '—',
+        );
+
         setJson('prepareOutput', state.prepared);
 
         setBadge('delegationStatus', 'Prepared', 'ok');
-        step('prepare', 'done', state.prepared.prepareId || 'prepared');
+        step('prepare', 'done', state.prepared.prepareId || state.prepared.salt || 'prepared');
 
-        log('PREPARE_DONE', state.prepared);
+        log('PREPARE_DONE', {
+          prepared: state.prepared,
+          detectedShape: preparedDelegation
+            ? 'prepared.delegation'
+            : state.prepared.delegate && state.prepared.delegationScope
+              ? 'prepared.delegate + prepared.delegationScope'
+              : 'unknown',
+        });
       }
 
       function getScopeFromPrepare() {
@@ -2184,6 +2300,141 @@
           selectors: scope.selectors,
           valueLte: { maxValue: 0n },
         };
+      }
+
+      function assertPreparedDelegationIsSafeForCurrentFlow(delegation) {
+        if (!delegation.delegate) {
+          throw new Error('prepared.delegation.delegate missing: ' + safeStringify(state.prepared));
+        }
+
+        if (!delegation.delegator) {
+          throw new Error('prepared.delegation.delegator missing: ' + safeStringify(state.prepared));
+        }
+
+        if (!delegation.authority) {
+          throw new Error('prepared.delegation.authority missing: ' + safeStringify(state.prepared));
+        }
+
+        if (!delegation.salt) {
+          throw new Error('prepared.delegation.salt missing: ' + safeStringify(state.prepared));
+        }
+
+        if (!Array.isArray(delegation.caveats)) {
+          throw new Error('prepared.delegation.caveats missing: ' + safeStringify(state.prepared));
+        }
+
+        const backendDelegator = delegation.delegator.toLowerCase();
+        const expectedDelegator = state.smartAccountAddress.toLowerCase();
+
+        if (backendDelegator !== expectedDelegator) {
+          throw new Error(
+            [
+              'prepared.delegation.delegator mismatch.',
+              'Backend returned delegator=' + delegation.delegator,
+              'Expected Hybrid Smart Account=' + state.smartAccountAddress,
+              '',
+              'Backend /installations/prepare must use:',
+              '  from: smartAccountAddress',
+              'not:',
+              '  from: userAddress / EOA',
+            ].join('\n'),
+          );
+        }
+
+        if (state.oneShotTargetAddress) {
+          const backendDelegate = delegation.delegate.toLowerCase();
+          const expectedDelegate = state.oneShotTargetAddress.toLowerCase();
+
+          if (backendDelegate !== expectedDelegate) {
+            throw new Error(
+              [
+                'prepared.delegation.delegate mismatch.',
+                'Backend returned delegate=' + delegation.delegate,
+                'Expected 1Shot targetAddress=' + state.oneShotTargetAddress,
+                '',
+                'This is the real cause of the 1Shot error:',
+                '"First delegation\\'s delegate must be the relayer Target wallet".',
+                '',
+                'Backend /installations/prepare must create delegation with:',
+                '  to: oneShot chainInfo.targetAddress',
+                'not:',
+                '  to: executorService.getAddress()',
+              ].join('\n'),
+            );
+          }
+        } else {
+          log('PREPARED_DELEGATION_TARGET_VALIDATION_SKIPPED', {
+            reason: 'oneShotTargetAddress unavailable, probably browser CORS on relayer_getCapabilities',
+            backendDelegate: delegation.delegate,
+          });
+        }
+      }
+
+      function buildDelegationToSignFromPrepare() {
+        if (state.prepared?.delegation) {
+          const d = state.prepared.delegation;
+
+          assertPreparedDelegationIsSafeForCurrentFlow(d);
+
+          const delegation = {
+            delegate: d.delegate,
+            delegator: d.delegator,
+            authority: d.authority,
+            caveats: d.caveats,
+            salt: d.salt,
+            signature: '0x',
+          };
+
+          log('PREPARE_DELEGATION_USED_AS_IS', {
+            backendDelegator: d.delegator,
+            signingDelegator: delegation.delegator,
+            smartAccountAddress: state.smartAccountAddress,
+            backendDelegate: d.delegate,
+            oneShotTargetAddress: state.oneShotTargetAddress || '(unavailable)',
+            note: 'Proof signs prepared.delegation exactly as returned by backend. No silent override.',
+            caveatsCount: delegation.caveats.length,
+            salt: delegation.salt,
+          });
+
+          return {
+            source: 'prepared.delegation as-is',
+            delegation,
+          };
+        }
+
+        if (state.prepared?.delegate && state.prepared?.delegationScope) {
+          if (
+            state.oneShotTargetAddress &&
+            state.prepared.delegate.toLowerCase() !== state.oneShotTargetAddress.toLowerCase()
+          ) {
+            throw new Error(
+              [
+                'prepared.delegate mismatch.',
+                'Backend returned delegate=' + state.prepared.delegate,
+                'Expected 1Shot targetAddress=' + state.oneShotTargetAddress,
+                '',
+                'Backend must return the 1Shot target wallet as delegate.',
+              ].join('\n'),
+            );
+          }
+
+          const delegation = state.libs.smartKit.createDelegation({
+            environment: state.smartAccount.environment,
+            from: state.smartAccountAddress,
+            to: state.prepared.delegate,
+            scope: getScopeFromPrepare(),
+          });
+
+          return {
+            source: 'prepared.delegate + prepared.delegationScope',
+            delegation,
+          };
+        }
+
+        throw new Error(
+          'Unsupported prepare response shape. Expected prepared.delegation OR prepared.delegate + prepared.delegationScope: ' +
+            safeStringify(state.prepared),
+        );
       }
 
       function normalizeSignedDelegation(delegation, signature) {
@@ -2210,20 +2461,12 @@
         step('sign', 'active', 'Waiting for smartAccount.signDelegation');
         setBadge('delegationStatus', 'Waiting for signature', 'warn');
 
-        const scope = getScopeFromPrepare();
+        const { source, delegation } = buildDelegationToSignFromPrepare();
 
         log('SIGN_DELEGATION_INPUT', {
+          source,
           environment: state.smartAccount.environment,
-          from: state.smartAccountAddress,
-          to: state.prepared.delegate,
-          scope,
-        });
-
-        const delegation = state.libs.smartKit.createDelegation({
-          environment: state.smartAccount.environment,
-          from: state.smartAccountAddress,
-          to: state.prepared.delegate,
-          scope,
+          delegation,
         });
 
         const signature = await state.smartAccount.signDelegation({ delegation });
@@ -2236,51 +2479,55 @@
         step('sign', 'done', signature ? signature.slice(0, 18) + '…' : 'signed');
 
         log('SIGN_DELEGATION_DONE', {
+          source,
           delegation,
           signedDelegation: state.signedDelegation,
         });
       }
 
-      async function grantInstallationInternal() {
+      async function confirmInstallationInternal() {
         if (!state.signedDelegation) await signDelegationInternal();
 
-        step('grant', 'active', 'Calling /installations/grant');
-        setBadge('installStatus', 'Granting', 'warn');
+        step('grant', 'active', 'Calling /installations/confirm');
+        setBadge('installStatus', 'Confirming', 'warn');
+
+        const skillId = getSkillIdentifier(state.selectedSkill) || DEFAULT_SKILL_ID;
+        const dcaConfig = buildDcaConfig();
+        const delegationSalt = state.prepared?.salt || state.prepared?.delegation?.salt;
+
+        if (!delegationSalt) {
+          throw new Error('prepare did not return salt/delegation.salt: ' + safeStringify(state.prepared));
+        }
 
         const body = {
           userAddress: state.account,
           smartAccountAddress: state.smartAccountAddress,
           chainId: BASE_SEPOLIA_ID,
-          permissionPath: 'low-level-function-call-delegation',
-          prepareSnapshot: state.prepared.prepareSnapshot,
+          skillId,
           signedDelegation: state.signedDelegation,
-          raw: {
-            source: 'proof.html',
-            sdk: '@metamask/smart-accounts-kit@1.6.0',
-            flow: 'hybrid-sa-direct-router-dca-function-call',
-          },
+          delegationSalt,
+          parameters: dcaConfig,
         };
 
-        log('GRANT_INPUT', body);
+        log('CONFIRM_INPUT', body);
 
-        state.installation = await requestJson('/installations/grant', {
+        state.installation = await requestJson('/installations/confirm', {
           method: 'POST',
           body: JSON.stringify(body),
         });
 
+        state.latestInstallation = state.installation;
+
         const installationId = getInstallationId();
 
         setText('installationValue', installationId);
-        setText(
-          'installationStatusValue',
-          state.installation?.installation?.status || state.installation?.status || 'active',
-        );
+        setText('installationStatusValue', state.installation?.status || 'active');
         setJson('grantOutput', state.installation);
 
-        setBadge('installStatus', 'Granted', 'ok');
+        setBadge('installStatus', 'Confirmed', 'ok');
         step('grant', 'done', installationId);
 
-        log('GRANT_DONE', state.installation);
+        log('CONFIRM_DONE', state.installation);
       }
 
       function getInstallationId() {
@@ -2288,76 +2535,166 @@
           state.installation?.installation?.installationId ||
           state.installation?.installationId ||
           state.installation?._id ||
+          state.latestInstallation?._id ||
           ''
         );
       }
 
+      function latestExecutionOf(installation) {
+        const executions = Array.isArray(installation?.executions) ? installation.executions : [];
+        return executions[0];
+      }
+
+      function isTerminalExecutionStatus(status) {
+        return status === 'confirmed' || status === 'failed';
+      }
+
+      async function fetchInstallationById(installationId) {
+        return requestJson('/installations/' + installationId);
+      }
+
+      async function pollInstallationAfterTrigger(before) {
+        const installationId = getInstallationId();
+        if (!installationId) throw new Error('installationId not found');
+
+        const beforeCount = Array.isArray(before?.executions) ? before.executions.length : 0;
+        const beforeLastExecutedAt = before?.lastExecutedAt || '';
+        const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+        let latest = before;
+
+        while (Date.now() < deadline) {
+          latest = await fetchInstallationById(installationId);
+          state.latestInstallation = latest;
+
+          const executions = Array.isArray(latest.executions) ? latest.executions : [];
+          const latestExecution = executions[0];
+
+          const hasNewExecution =
+            executions.length > beforeCount ||
+            Boolean(latest.lastExecutedAt && latest.lastExecutedAt !== beforeLastExecutedAt);
+
+          log('INSTALLATION_POLL_TICK', {
+            installationId,
+            installationStatus: latest.status,
+            beforeCount,
+            executionsCount: executions.length,
+            beforeLastExecutedAt,
+            lastExecutedAt: latest.lastExecutedAt,
+            hasNewExecution,
+            latestExecution,
+          });
+
+          setText('attemptValue', latestExecution?.status || '—');
+          setText('taskValue', latestExecution?.oneShotTaskId || '—');
+          setText('hashValue', latestExecution?.txHash || '—');
+          setJson('runOutput', latest);
+
+          if (hasNewExecution && latestExecution && isTerminalExecutionStatus(latestExecution.status)) {
+            setBadge(
+              'runStatus',
+              latestExecution.status,
+              latestExecution.status === 'confirmed' ? 'ok' : 'fail',
+            );
+            setBadge(
+              'historyStatus',
+              latestExecution.status,
+              latestExecution.status === 'confirmed' ? 'ok' : 'fail',
+            );
+            step(
+              'attempt',
+              latestExecution.status === 'confirmed' ? 'done' : 'err',
+              latestExecution.txHash || latestExecution.errorMessage || latestExecution.status,
+            );
+            return latest;
+          }
+
+          if (hasNewExecution && latestExecution?.status === 'submitted') {
+            setBadge('runStatus', 'Submitted', 'warn');
+            step('attempt', 'active', latestExecution.oneShotTaskId || 'submitted');
+          }
+
+          await sleep(POLL_INTERVAL_MS);
+        }
+
+        throw new Error('Timed out polling installation execution for ' + installationId);
+      }
+
       async function runInstallationInternal() {
-        if (!getInstallationId()) await grantInstallationInternal();
+        if (!getInstallationId()) await confirmInstallationInternal();
 
         const installationId = getInstallationId();
-        if (!installationId) throw new Error('installationId not found after grant');
+        if (!installationId) throw new Error('installationId not found after confirm');
 
-        step('run', 'active', 'Calling /runtime/run/' + installationId);
+        const before = await fetchInstallationById(installationId);
+        state.latestInstallation = before;
+
+        step('run', 'active', 'Calling /admin/installations/' + installationId + '/trigger');
         setBadge('runStatus', 'Running', 'warn');
 
-        state.attempt = await requestJson('/runtime/run/' + installationId, {
+        state.triggerResult = await requestJson('/admin/installations/' + installationId + '/trigger', {
           method: 'POST',
           headers: adminHeaders(),
           body: JSON.stringify({ force: true }),
         });
 
-        const attemptId = getAttemptId();
-        const relay = state.attempt?.relay || state.attempt?.attempt?.relay || {};
+        setJson('runOutput', {
+          triggerResult: state.triggerResult,
+          before,
+        });
 
-        setText('attemptValue', attemptId);
-        setText('taskValue', relay.taskId || '—');
-        setText('hashValue', relay.txHash || '—');
-        setJson('runOutput', state.attempt);
+        setBadge('runStatus', 'Triggered', 'warn');
+        step('run', 'done', 'triggered');
 
-        setBadge('runStatus', 'Submitted', 'ok');
-        step('run', 'done', attemptId || 'submitted');
+        log('ADMIN_TRIGGER_DONE', {
+          installationId,
+          triggerResult: state.triggerResult,
+        });
 
-        log('RUN_DONE', state.attempt);
+        const after = await fetchInstallationById(installationId);
+        state.latestInstallation = after;
 
-        if (attemptId) await refreshAttemptInternal();
-      }
+        setJson('historyOutput', after);
+        log('INSTALLATION_AFTER_TRIGGER', {
+          installationId,
+          installation: after,
+          latestExecution: latestExecutionOf(after),
+        });
 
-      function getAttemptId() {
-        return (
-          state.attempt?.attemptId || state.attempt?.attempt?.attemptId || state.attempt?._id || ''
-        );
+        await pollInstallationAfterTrigger(before);
       }
 
       async function refreshAttemptInternal() {
-        const attemptId = getAttemptId();
-        if (!attemptId) throw new Error('No attemptId. Run installation first.');
+        const installationId = getInstallationId();
+        if (!installationId) throw new Error('No installationId. Confirm first.');
 
-        step('attempt', 'active', 'Fetching attempt ' + attemptId);
+        step('attempt', 'active', 'Fetching installation ' + installationId);
 
-        state.attempt = await requestJson('/runtime/attempts/' + attemptId);
+        const data = await fetchInstallationById(installationId);
+        state.latestInstallation = data;
 
-        const relay = state.attempt?.relay || state.attempt?.attempt?.relay || {};
+        const latestExecution = latestExecutionOf(data);
 
-        setText('taskValue', relay.taskId || '—');
-        setText('hashValue', relay.txHash || '—');
-        setJson('historyOutput', state.attempt);
+        setText('attemptValue', latestExecution?.status || '—');
+        setText('taskValue', latestExecution?.oneShotTaskId || '—');
+        setText('hashValue', latestExecution?.txHash || '—');
+        setJson('historyOutput', data);
 
-        setBadge(
-          'historyStatus',
-          state.attempt.status || state.attempt?.attempt?.status || 'attempt',
-          'ok',
-        );
-        step('attempt', 'done', state.attempt.status || state.attempt?.attempt?.status || 'loaded');
+        setBadge('historyStatus', latestExecution?.status || data.status || 'loaded', 'ok');
+        step('attempt', 'done', latestExecution?.status || 'loaded');
 
-        log('ATTEMPT_REFRESHED', state.attempt);
+        log('INSTALLATION_REFRESHED', {
+          installation: data,
+          latestExecution,
+        });
       }
 
       async function fetchInstallationInternal() {
         const installationId = getInstallationId();
-        if (!installationId) throw new Error('No installationId. Grant first.');
+        if (!installationId) throw new Error('No installationId. Confirm first.');
 
-        const data = await requestJson('/installations/' + installationId);
+        const data = await fetchInstallationById(installationId);
+        state.latestInstallation = data;
 
         setJson('historyOutput', data);
         log('INSTALLATION_FETCHED', data);
@@ -2384,10 +2721,11 @@
         await createSmartAccountInternal();
         await deploySmartAccountInternal();
         await loadExecutorInternal();
+        await loadOneShotChainInfoInternal();
         await loadSkillsInternal();
         await prepareDelegationInternal();
         await signDelegationInternal();
-        await grantInstallationInternal();
+        await confirmInstallationInternal();
         await runInstallationInternal();
       }
 
@@ -2396,7 +2734,8 @@
         state.delegation = null;
         state.signedDelegation = null;
         state.installation = null;
-        state.attempt = null;
+        state.triggerResult = null;
+        state.latestInstallation = null;
 
         for (const name of ['prepare', 'sign', 'grant', 'run', 'attempt']) {
           step(name, '', 'Not started');
@@ -2422,8 +2761,8 @@
         setBadge('historyStatus', 'No attempt');
 
         resetPre('prepareOutput', 'No prepare result yet.');
-        resetPre('grantOutput', 'No grant result yet.');
-        resetPre('runOutput', 'No runtime result yet.');
+        resetPre('grantOutput', 'No confirm result yet.');
+        resetPre('runOutput', 'No trigger result yet.');
         resetPre('historyOutput', 'No history yet.');
 
         log('UI_RESET');
@@ -2453,12 +2792,6 @@
         provider.on('accountsChanged', (accounts) => {
           const nextAccount = accounts?.[0] || '';
 
-          /**
-           * Critical fix:
-           * During Create/Deploy/Sign, never mutate state.account from provider events.
-           * MetaMask Flask can emit account changes while an approval/signing flow is opening.
-           * Mutating here makes SmartAccount owner, walletClient account, and selected account race.
-           */
           if (state.busy) {
             log('METAMASK_ACCOUNTS_CHANGED_WHILE_BUSY_IGNORED', {
               accounts,
@@ -2478,8 +2811,7 @@
             return;
           }
 
-          const changed =
-            state.account && state.account.toLowerCase() !== nextAccount.toLowerCase();
+          const changed = state.account && state.account.toLowerCase() !== nextAccount.toLowerCase();
 
           if (changed) {
             resetSmartAccountState('MetaMask accountsChanged while idle');
@@ -2517,12 +2849,6 @@
             switchingChain: state.switchingChain,
             activeAction: state.activeAction,
           });
-
-          /**
-           * IMPORTANT:
-           * Do not reset smart account state on chain flicker.
-           * If chain is wrong, actions will call ensureBaseSepoliaInternal().
-           */
         });
 
         provider.on?.('disconnect', (error) => {
@@ -2550,9 +2876,9 @@
         bind('loadSkillsBtn', 'Loading skills', loadSkillsInternal);
         bind('prepareBtn', 'Preparing', prepareDelegationInternal);
         bind('signBtn', 'Signing', signDelegationInternal);
-        bind('grantBtn', 'Granting', grantInstallationInternal);
-        bind('runBtn', 'Running', runInstallationInternal);
-        bind('refreshAttemptBtn', 'Refreshing attempt', refreshAttemptInternal);
+        bind('grantBtn', 'Confirming', confirmInstallationInternal);
+        bind('runBtn', 'Triggering', runInstallationInternal);
+        bind('refreshAttemptBtn', 'Refreshing installation', refreshAttemptInternal);
         bind('fetchInstallationBtn', 'Fetching installation', fetchInstallationInternal);
         bind('fetchMyInstallationsBtn', 'Fetching installations', fetchMyInstallationsInternal);
         bind('runAllBtn', 'Running full flow', runFullFlowInternal);
@@ -2578,12 +2904,13 @@
         createSmartAccount: createSmartAccountInternal,
         deploySmartAccount: deploySmartAccountInternal,
         loadExecutor: loadExecutorInternal,
+        loadOneShotChainInfo: loadOneShotChainInfoInternal,
         loadSkills: loadSkillsInternal,
         prepareDelegation: prepareDelegationInternal,
         signDelegation: signDelegationInternal,
-        grantInstallation: grantInstallationInternal,
+        confirmInstallation: confirmInstallationInternal,
         runInstallation: runInstallationInternal,
-        refreshAttempt: refreshAttemptInternal,
+        refreshInstallation: refreshAttemptInternal,
         resetUi,
       };
 
@@ -2607,6 +2934,9 @@
           await ensureBaseSepoliaInternal();
           return getDebugState();
         },
+        async loadOneShotChainInfo() {
+          return loadOneShotChainInfoInternal();
+        },
       };
 
       window.addEventListener('error', (event) => {
@@ -2628,8 +2958,10 @@
 
       function boot() {
         log('PROOF_VERSION', {
-          version: 'account-adopt-v2',
-          note: 'Adopts MetaMask selected account at action start and recreates Hybrid SA signer before sendUserOperation.',
+          version: 'current-backend-confirm-trigger-v1',
+          note: 'Uses current backend flow: prepare → sign prepared.delegation as-is → confirm → admin trigger → poll installation.',
+          important:
+            'prepared.delegation.delegator must be Hybrid SA, and prepared.delegation.delegate must be 1Shot targetAddress.',
         });
 
         state.provider = getInjectedProvider();

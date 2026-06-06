@@ -7,7 +7,7 @@ import request from 'supertest';
 import { OneShotService } from '../src/modules/oneshot/oneshot.service';
 import { X402Service } from '../src/modules/x402/x402.service';
 import { VeniceService } from '../src/modules/venice/venice.service';
-import { TEST_USER } from './helpers';
+import { TEST_SMART_ACCOUNT, TEST_USER } from './helpers';
 
 const apiKey = { 'x-api-key': process.env.ADMIN_API_KEY || 'test-admin-key' };
 
@@ -45,7 +45,7 @@ describe('API route smoke e2e', () => {
     const { AppModule } = await import('../src/app.module');
 
     oneShot = {
-      getCapabilities: jest.fn().mockResolvedValue({ '84532': { feeCollector: TEST_USER } }),
+      getCapabilities: jest.fn().mockResolvedValue({ '84532': { feeCollector: TEST_USER, targetAddress: TEST_USER } }),
       getStatus: jest.fn().mockResolvedValue({ status: 200, hash: '0xH' }),
       send7710Transaction: jest.fn().mockResolvedValue('0x' + 'ab'.repeat(32)),
       poll: jest.fn().mockResolvedValue({ status: 200, hash: '0xH' }),
@@ -81,7 +81,7 @@ describe('API route smoke e2e', () => {
       await conn.collection('installations').deleteMany({});
     } catch {}
     jest.clearAllMocks();
-    oneShot.getCapabilities.mockResolvedValue({ '84532': { feeCollector: TEST_USER } });
+    oneShot.getCapabilities.mockResolvedValue({ '84532': { feeCollector: TEST_USER, targetAddress: TEST_USER } });
     oneShot.getStatus.mockResolvedValue({ status: 200, hash: '0xH' });
     oneShot.send7710Transaction.mockResolvedValue('0x' + 'ab'.repeat(32));
     oneShot.poll.mockResolvedValue({ status: 200, hash: '0xH' });
@@ -119,7 +119,7 @@ describe('API route smoke e2e', () => {
   it('serves the proof harness at /proof', async () => {
     const res = await request(app.getHttpServer()).get('/proof').expect(200);
     expect(res.headers['content-type']).toContain('text/html');
-    expect(res.text).toContain('SkillWallet Proof Harness');
+    expect(res.text).toContain('SkillWallet Proof');
   });
 
   it('calls health and executor read APIs', async () => {
@@ -157,7 +157,7 @@ describe('API route smoke e2e', () => {
 
     await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId, userAddress: TEST_USER })
+      .send({ skillId, userAddress: TEST_USER, smartAccountAddress: TEST_SMART_ACCOUNT })
       .expect(201);
 
     const installations = await request(app.getHttpServer())

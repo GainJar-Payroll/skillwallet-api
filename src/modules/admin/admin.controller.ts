@@ -17,6 +17,7 @@ import { CreateSkillDto } from '../skills/dto/create-skill.dto';
 
 const GENERIC_DCA_TEMPLATE: CreateSkillDto = {
   name: 'Generic DCA',
+  skillId: 'generic-dca-84532',
   description:
     'Dollar-cost average USDC into a selected Base token on a fixed schedule. The executor approves USDC, swaps through SwapRouter02, and records AI market context for each run.',
   iconUrl:

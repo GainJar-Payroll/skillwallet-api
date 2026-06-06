@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -11,7 +12,6 @@ import { getAddress } from 'viem';
 import { Installation, InstallationDocument, ExecutionRecord } from './schemas/installation.schema';
 import { SkillsService } from '../skills/skills.service';
 import { DelegationService } from '../delegation/delegation.service';
-import { OneShotService } from '../oneshot/oneshot.service';
 import { PrepareInstallationDto } from './dto/prepare-installation.dto';
 import { ConfirmInstallationDto } from './dto/confirm-installation.dto';
 
@@ -32,7 +32,6 @@ export class InstallationsService {
     private readonly installationModel: Model<InstallationDocument>,
     private readonly skillsService: SkillsService,
     private readonly delegationService: DelegationService,
-    private readonly oneShotService: OneShotService,
   ) {}
 
   async prepareInstallation(dto: PrepareInstallationDto): Promise<PrepareInstallationResponse> {
@@ -42,24 +41,28 @@ export class InstallationsService {
       throw new BadRequestException('Skill is not active');
     }
 
-    const salt = this.delegationService.generateSalt();
-
+    const userAddress = getAddress(dto.userAddress) as `0x${string}`;
     const smartAccountAddress = getAddress(dto.smartAccountAddress) as `0x${string}`;
 
-    const oneShotTargetAddress = await this.resolveOneShotTargetAddress(skill.chainId);
+    await this.assertNoActiveDuplicate({
+      userAddress,
+      smartAccountAddress,
+      skillId: dto.skillId,
+    });
 
-    const delegation = this.delegationService.prepare(
+    const salt = this.delegationService.generateSalt();
+
+    const delegation = (await this.delegationService.prepare(
       skill,
       smartAccountAddress,
       salt,
-      oneShotTargetAddress,
-    ) as unknown as Record<string, unknown>;
+    )) as unknown as Record<string, unknown>;
 
     return {
       delegation,
       salt,
       skillId: dto.skillId,
-      executorAddress: oneShotTargetAddress,
+      executorAddress: delegation.delegate as `0x${string}`,
       chainId: skill.chainId,
     };
   }
@@ -67,23 +70,32 @@ export class InstallationsService {
   async confirmInstallation(dto: ConfirmInstallationDto): Promise<Installation> {
     const skill = await this.skillsService.findById(dto.skillId);
 
+    if (!skill.isActive) {
+      throw new BadRequestException('Skill is not active');
+    }
+
     const userAddress = getAddress(dto.userAddress) as `0x${string}`;
     const smartAccountAddress = getAddress(dto.smartAccountAddress) as `0x${string}`;
 
-    const oneShotTargetAddress = await this.resolveOneShotTargetAddress(skill.chainId);
+    await this.assertNoActiveDuplicate({
+      userAddress,
+      smartAccountAddress,
+      skillId: dto.skillId,
+    });
 
-    const expected = this.delegationService.prepare(
+    const expected = (await this.delegationService.prepare(
       skill,
       smartAccountAddress,
       dto.delegationSalt as `0x${string}`,
-      oneShotTargetAddress,
-    ) as unknown as Record<string, unknown>;
+    )) as unknown as Record<string, unknown>;
+
+    const expectedDelegate = getAddress(expected.delegate as string) as `0x${string}`;
 
     try {
       this.delegationService.validateDelegationShape(
         dto.signedDelegation,
         smartAccountAddress,
-        oneShotTargetAddress,
+        expectedDelegate,
       );
     } catch (err) {
       throw new BadRequestException(`Invalid delegation signature: ${(err as Error).message}`);
@@ -184,12 +196,15 @@ export class InstallationsService {
 
   async updateLastExecution(id: string, patch: Partial<ExecutionRecord>): Promise<void> {
     const doc = await this.installationModel.findById(id).exec();
+
     if (!doc) return;
 
     const target = doc.executions[0];
+
     if (!target) return;
 
     Object.assign(target, patch);
+
     doc.markModified('executions');
 
     await doc.save();
@@ -225,6 +240,28 @@ export class InstallationsService {
       .exec();
   }
 
+  private async assertNoActiveDuplicate(input: {
+    userAddress: `0x${string}`;
+    smartAccountAddress: `0x${string}`;
+    skillId: string;
+  }): Promise<void> {
+    const existing = await this.installationModel
+      .findOne({
+        userAddress: input.userAddress,
+        smartAccountAddress: input.smartAccountAddress,
+        skillId: new Types.ObjectId(input.skillId),
+        status: { $in: ['active', 'paused'] },
+      })
+      .lean()
+      .exec();
+
+    if (existing) {
+      throw new ConflictException(
+        `Skill is already installed for this smart account. installationId=${existing._id}`,
+      );
+    }
+  }
+
   private async setStatus(
     id: string,
     userAddress: string,
@@ -243,16 +280,5 @@ export class InstallationsService {
     await inst.save();
 
     return inst.toObject();
-  }
-
-  private async resolveOneShotTargetAddress(chainId: number): Promise<`0x${string}`> {
-    const capabilities = await this.oneShotService.getCapabilities(chainId);
-    const chainInfo = capabilities[String(chainId)] as { targetAddress?: string } | undefined;
-
-    if (!chainInfo?.targetAddress) {
-      throw new BadRequestException(`1Shot does not report targetAddress for chainId ${chainId}`);
-    }
-
-    return getAddress(chainInfo.targetAddress) as `0x${string}`;
   }
 }

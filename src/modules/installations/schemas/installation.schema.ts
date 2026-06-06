@@ -59,3 +59,18 @@ export const InstallationSchema = SchemaFactory.createForClass(Installation);
 InstallationSchema.index({ status: 1, skillId: 1 });
 InstallationSchema.index({ status: 1, nextExecutionAt: 1 });
 InstallationSchema.index({ userAddress: 1, smartAccountAddress: 1 });
+
+InstallationSchema.index(
+  {
+    userAddress: 1,
+    smartAccountAddress: 1,
+    skillId: 1,
+    status: 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      status: { $in: ['active', 'paused'] },
+    },
+  },
+);

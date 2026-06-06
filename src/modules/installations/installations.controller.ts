@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Patch,
-  Post,
-  Query,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiCreatedResponse,
   ApiOkResponse,
@@ -30,7 +21,7 @@ export class InstallationsController {
   @ApiOperation({
     summary: 'Prepare a delegation',
     description:
-      'Resolves a delegation scope for the requested skill/user, generates a salt, and returns the unsigned delegation to be signed client-side.',
+      'Resolves a delegation scope for the requested skill/smart account, generates a salt, and returns the unsigned delegation to be signed client-side.',
   })
   @ApiCreatedResponse({
     description: 'Unsigned delegation with the salt required for /installations/confirm',
@@ -55,11 +46,29 @@ export class InstallationsController {
   @ApiQuery({
     name: 'userAddress',
     required: true,
-    description: 'EVM address of the user that owns the installations',
+    description: 'EOA address of the user that owns the installations',
+  })
+  @ApiQuery({
+    name: 'chainId',
+    required: false,
+    description: 'Optional chain id filter',
+  })
+  @ApiQuery({
+    name: 'smartAccountAddress',
+    required: false,
+    description: 'Optional Hybrid Smart Account address filter',
   })
   @ApiOkResponse({ description: 'Installations wrapped in { data }' })
-  async findByUser(@Query('userAddress') userAddress: string) {
-    const data = await this.installations.findByUser(userAddress);
+  async findByUser(
+    @Query('userAddress') userAddress: string,
+    @Query('chainId') chainId?: string,
+    @Query('smartAccountAddress') smartAccountAddress?: string,
+  ) {
+    const data = await this.installations.findByUser(userAddress, {
+      chainId: chainId ? Number(chainId) : undefined,
+      smartAccountAddress,
+    });
+
     return { data };
   }
 

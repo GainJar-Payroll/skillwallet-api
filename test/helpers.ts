@@ -43,10 +43,11 @@ export function buildInstallation(overrides: Partial<Installation> = {}): Instal
     skillId: new Types.ObjectId(),
     signedDelegation: {
       delegate: TEST_EXECUTOR,
-      delegator: TEST_USER,
+      delegator: TEST_SMART_ACCOUNT,
       salt: '0x' + '11'.repeat(32),
       signature: '0x' + '22'.repeat(65),
     },
+    smartAccountAddress: TEST_SMART_ACCOUNT,
     delegationSalt: '0x' + '11'.repeat(32),
     chainId: 84532,
     parameters: { amountUsdc: '10000000', outputToken: 'weth' },
@@ -71,6 +72,9 @@ export function buildMockSkillModel() {
 
   return {
     find: jest.fn().mockReturnValue({
+      sort: () => ({
+        lean: () => ({ exec: jest.fn().mockResolvedValue(Object.values(data)) }),
+      }),
       lean: () => ({ exec: jest.fn().mockResolvedValue(Object.values(data)) }),
     }),
     findById: jest.fn().mockImplementation((id: string) => ({
@@ -170,7 +174,20 @@ export function buildMockInstallationModel() {
       data[String(created._id)] = created;
       return wrap(created);
     }),
-    updateOne: jest.fn().mockResolvedValue({ acknowledged: true, modifiedCount: 1 }),
+    findOne: jest.fn().mockImplementation((filter: { userAddress?: string; smartAccountAddress?: string; skillId?: Types.ObjectId; status?: { $in?: string[] } }) => ({
+      lean: () => ({
+        exec: jest.fn().mockImplementation(async () => {
+          return Object.values(data).find((i) => {
+            if (filter.userAddress && i.userAddress !== filter.userAddress) return false;
+            if (filter.smartAccountAddress && i.smartAccountAddress !== filter.smartAccountAddress) return false;
+            if (filter.skillId && String(i.skillId) !== String(filter.skillId)) return false;
+            if (filter.status?.$in && !filter.status.$in.includes(i.status)) return false;
+            return true;
+          }) ?? null;
+        }),
+      }),
+    })),
+    updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ acknowledged: true, modifiedCount: 1 }) }),
     findByIdAndUpdate: jest.fn().mockResolvedValue({ acknowledged: true, modifiedCount: 1 }),
     __seed: (i: Installation) => {
       const withId = { ...i, _id: i._id ?? new Types.ObjectId() } as Installation;
@@ -194,3 +211,5 @@ export function buildMockExecutorService() {
     getPublicClient: jest.fn().mockReturnValue({}),
   };
 }
+
+export const TEST_SMART_ACCOUNT = '0x0000000000000000000000000000000000000abc' as `0x${string}`;

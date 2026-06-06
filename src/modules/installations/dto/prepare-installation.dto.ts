@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsMongoId, IsObject, IsOptional, IsString, Matches } from 'class-validator';
+import { IsInt, IsMongoId, IsObject, IsOptional, IsString, Matches } from 'class-validator';
 
 export class PrepareInstallationDto {
   @ApiProperty({
@@ -28,6 +28,14 @@ export class PrepareInstallationDto {
     message: 'smartAccountAddress must be a valid 0x address',
   })
   smartAccountAddress!: string;
+
+  @ApiPropertyOptional({
+    description: 'Expected chain id. If provided, it must match the selected skill chainId.',
+    example: 84532,
+  })
+  @IsOptional()
+  @IsInt()
+  chainId?: number;
 
   @ApiPropertyOptional({
     description: 'Skill parameters/config used by frontend proof flow',

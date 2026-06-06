@@ -13,6 +13,7 @@ import {
   buildInstallation,
   buildSkill,
   TEST_EXECUTOR,
+  TEST_SMART_ACCOUNT,
   TEST_USER,
 } from '../../../test/helpers';
 
@@ -27,9 +28,9 @@ describe('InstallationsService', () => {
     skillsService = { findById: jest.fn() };
     delegationService = {
       generateSalt: jest.fn().mockReturnValue('0x' + '11'.repeat(32)),
-      prepare: jest.fn().mockReturnValue({
+      prepare: jest.fn().mockResolvedValue({
         delegate: TEST_EXECUTOR,
-        delegator: TEST_USER,
+        delegator: TEST_SMART_ACCOUNT,
         salt: '0x' + '11'.repeat(32),
       }),
       validateDelegationShape: jest.fn(),
@@ -52,6 +53,7 @@ describe('InstallationsService', () => {
       const out = await service.prepareInstallation({
         skillId: String(new Types.ObjectId()),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
       } as never);
       expect(out.salt).toBeDefined();
       expect(out.executorAddress).toBe(TEST_EXECUTOR);
@@ -61,7 +63,7 @@ describe('InstallationsService', () => {
     it('rejects when skill inactive', async () => {
       skillsService.findById.mockResolvedValue(buildSkill({ isActive: false }));
       await expect(
-        service.prepareInstallation({ skillId: 'x', userAddress: TEST_USER } as never),
+        service.prepareInstallation({ skillId: 'x', userAddress: TEST_USER, smartAccountAddress: TEST_SMART_ACCOUNT } as never),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -72,10 +74,11 @@ describe('InstallationsService', () => {
       const out = await service.confirmInstallation({
         skillId: String(new Types.ObjectId()),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: '0x' + '11'.repeat(32),
         signedDelegation: {
           delegate: TEST_EXECUTOR,
-          delegator: TEST_USER,
+          delegator: TEST_SMART_ACCOUNT,
           salt: '0x' + '11'.repeat(32),
           signature: '0x' + '22'.repeat(65),
         },
@@ -92,10 +95,11 @@ describe('InstallationsService', () => {
         service.confirmInstallation({
           skillId: String(new Types.ObjectId()),
           userAddress: TEST_USER,
+          smartAccountAddress: TEST_SMART_ACCOUNT,
           delegationSalt: '0x' + '11'.repeat(32),
           signedDelegation: {
             delegate: TEST_EXECUTOR,
-            delegator: TEST_USER,
+            delegator: TEST_SMART_ACCOUNT,
             salt: '0x' + '11'.repeat(32),
             signature: '0x' + '22'.repeat(65),
           },

@@ -13,12 +13,15 @@ import { X402Module } from '../src/modules/x402/x402.module';
 import { OneShotModule } from '../src/modules/oneshot/oneshot.module';
 import { VeniceModule } from '../src/modules/venice/venice.module';
 import { Skill, SkillSchema } from '../src/modules/skills/schemas/skill.schema';
-import { Installation, InstallationSchema } from '../src/modules/installations/schemas/installation.schema';
+import {
+  Installation,
+  InstallationSchema,
+} from '../src/modules/installations/schemas/installation.schema';
 import { OneShotService } from '../src/modules/oneshot/oneshot.service';
 import { X402Service } from '../src/modules/x402/x402.service';
 import { VeniceService } from '../src/modules/venice/venice.service';
 import { RunnerService } from '../src/modules/runner/runner.service';
-import { buildSkill, TEST_USER, TEST_EXECUTOR } from '../test/helpers';
+import { buildSkill, TEST_SMART_ACCOUNT, TEST_USER } from '../test/helpers';
 import configuration from '../src/config/configuration';
 
 describe('Installations e2e', () => {
@@ -31,7 +34,7 @@ describe('Installations e2e', () => {
 
   beforeAll(async () => {
     oneShot = {
-      getCapabilities: jest.fn().mockResolvedValue({ '84532': { feeCollector: TEST_USER } }),
+      getCapabilities: jest.fn().mockResolvedValue({ '84532': { feeCollector: TEST_USER, targetAddress: TEST_USER } }),
       send7710Transaction: jest.fn().mockResolvedValue('0x' + 'ab'.repeat(32)),
       poll: jest.fn().mockResolvedValue({ status: 200, hash: '0xH' }),
     };
@@ -84,7 +87,7 @@ describe('Installations e2e', () => {
       await conn.collection('skills').deleteMany({});
       await conn.collection('installations').deleteMany({});
       jest.clearAllMocks();
-      oneShot.getCapabilities.mockResolvedValue({ '84532': { feeCollector: TEST_USER } });
+      oneShot.getCapabilities.mockResolvedValue({ '84532': { feeCollector: TEST_USER, targetAddress: TEST_USER } });
       oneShot.send7710Transaction.mockResolvedValue('0x' + 'ab'.repeat(32));
       oneShot.poll.mockResolvedValue({ status: 200, hash: '0xH' });
     } catch {}
@@ -100,7 +103,11 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const res = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     expect(res.body.salt).toMatch(/^0x[0-9a-f]{64}$/);
     expect(res.body.executorAddress).toBe(res.body.delegation.delegate);
@@ -110,7 +117,11 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     const salt = prepare.body.salt;
     const signedDelegation = {
@@ -122,6 +133,7 @@ describe('Installations e2e', () => {
       .send({
         skillId: String(skill._id),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: salt,
         signedDelegation,
         parameters: { amountUsdc: '10000000', outputToken: 'weth' },
@@ -134,13 +146,18 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
         skillId: String(skill._id),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
         signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
       })
@@ -155,13 +172,18 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
         skillId: String(skill._id),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
         signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
       })
@@ -183,13 +205,18 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
         skillId: String(skill._id),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
         signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
       })
@@ -204,13 +231,18 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
         skillId: String(skill._id),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
         signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
       })
@@ -225,13 +257,18 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
         skillId: String(skill._id),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
         signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
       })
@@ -246,13 +283,18 @@ describe('Installations e2e', () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
-      .send({ skillId: String(skill._id), userAddress: TEST_USER })
+      .send({
+        skillId: String(skill._id),
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
       .expect(201);
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
         skillId: String(skill._id),
         userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
         signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
       })

@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { DelegationService } from './delegation.service';
-import { ExecutorService } from '../executor/executor.service';
-import { buildMockExecutorService, buildSkill, TEST_USER } from '../../../test/helpers';
+import { OneShotService } from '../oneshot/oneshot.service';
+import { buildSkill, TEST_EXECUTOR, TEST_SMART_ACCOUNT } from '../../../test/helpers';
 
 jest.mock('@metamask/smart-accounts-kit', () => {
   const actual = jest.requireActual('@metamask/smart-accounts-kit');
@@ -9,7 +9,7 @@ jest.mock('@metamask/smart-accounts-kit', () => {
     ...actual,
     createDelegation: jest.fn().mockReturnValue({
       delegate: '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
-      delegator: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+      delegator: '0x0000000000000000000000000000000000000abc',
       salt: '0x' + '11'.repeat(32),
     }),
   };
@@ -22,7 +22,14 @@ describe('DelegationService', () => {
     const mod = await Test.createTestingModule({
       providers: [
         DelegationService,
-        { provide: ExecutorService, useValue: buildMockExecutorService() },
+        {
+          provide: OneShotService,
+          useValue: {
+            getCapabilities: jest.fn().mockResolvedValue({
+              '84532': { targetAddress: TEST_EXECUTOR },
+            }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(DelegationService);
@@ -76,21 +83,21 @@ describe('DelegationService', () => {
 
   describe('validateDelegationShape', () => {
     const validDelegation = {
-      delegate: '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
-      delegator: TEST_USER,
+      delegate: TEST_EXECUTOR,
+      delegator: TEST_SMART_ACCOUNT,
       salt: '0x' + '11'.repeat(32),
       signature: '0x' + '22'.repeat(65),
     };
 
     it('passes for a valid delegation', () => {
       expect(() =>
-        service.validateDelegationShape(validDelegation, TEST_USER),
+        service.validateDelegationShape(validDelegation, TEST_SMART_ACCOUNT, TEST_EXECUTOR),
       ).not.toThrow();
     });
 
     it('rejects missing signature', () => {
       expect(() =>
-        service.validateDelegationShape({ ...validDelegation, signature: '0x' }, TEST_USER),
+        service.validateDelegationShape({ ...validDelegation, signature: '0x' }, TEST_SMART_ACCOUNT, TEST_EXECUTOR),
       ).toThrow(/signature/);
     });
 
@@ -98,7 +105,8 @@ describe('DelegationService', () => {
       expect(() =>
         service.validateDelegationShape(
           { ...validDelegation, delegate: '0x0000000000000000000000000000000000000001' },
-          TEST_USER,
+          TEST_SMART_ACCOUNT,
+          TEST_EXECUTOR,
         ),
       ).toThrow(/delegate/);
     });
@@ -107,26 +115,27 @@ describe('DelegationService', () => {
       expect(() =>
         service.validateDelegationShape(
           { ...validDelegation, delegator: '0x0000000000000000000000000000000000000001' },
-          TEST_USER,
+          TEST_SMART_ACCOUNT,
+          TEST_EXECUTOR,
         ),
       ).toThrow(/delegator/);
     });
   });
 
   describe('prepare', () => {
-    it('builds an unsigned delegation for a skill', () => {
+    it('builds an unsigned delegation for a skill', async () => {
       const skill = buildSkill();
       const salt = service.generateSalt();
-      const delegation = service.prepare(skill, TEST_USER, salt);
+      const delegation = await service.prepare(skill, TEST_SMART_ACCOUNT, salt);
       expect(delegation).toBeDefined();
     });
   });
 
   describe('createDelegation mock', () => {
-    it('is called with the right arguments', () => {
+    it('is called with the right arguments', async () => {
       const kit = jest.requireMock('@metamask/smart-accounts-kit');
       const skill = buildSkill();
-      service.prepare(skill, TEST_USER, '0x' + '11'.repeat(32));
+      await service.prepare(skill, TEST_SMART_ACCOUNT, '0x' + '11'.repeat(32));
       expect(kit.createDelegation).toHaveBeenCalled();
     });
   });

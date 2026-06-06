@@ -32,7 +32,8 @@ export class SkillsController {
   @Get()
   @ApiOperation({
     summary: 'List skills',
-    description: 'Returns active skills by default. Pass `active=false` to include deactivated ones.',
+    description:
+      'Returns active skills by default. Supports filtering by chainId. Pass active=false to include deactivated skills.',
   })
   @ApiQuery({
     name: 'active',
@@ -40,10 +41,23 @@ export class SkillsController {
     type: String,
     description: 'Filter by active state ("true"/"false"). Defaults to true.',
   })
+  @ApiQuery({
+    name: 'chainId',
+    required: false,
+    type: Number,
+    description: 'Filter skills by EVM chain id, for example 84532 or 8453.',
+  })
   @ApiOkResponse({ description: 'Catalog of skills wrapped in { data }' })
-  async findAll(@Query('active') active?: string) {
+  async findAll(@Query('active') active?: string, @Query('chainId') chainId?: string) {
     const onlyActive = active === undefined ? true : active === 'true';
-    const data = await this.skills.findAll(onlyActive);
+
+    const parsedChainId = chainId === undefined || chainId === '' ? undefined : Number(chainId);
+
+    const data = await this.skills.findAll({
+      onlyActive,
+      chainId: parsedChainId,
+    });
+
     return { data };
   }
 
