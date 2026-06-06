@@ -35,6 +35,9 @@ export class Skill {
   name!: string;
 
   @Prop({ required: true })
+  skillId!: string;
+
+  @Prop({ required: true })
   description!: string;
 
   @Prop({ required: true })

@@ -63,7 +63,7 @@ export class SkillsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a skill by id' })
-  @ApiParam({ name: 'id', description: 'Mongo ObjectId of the skill' })
+  @ApiParam({ name: 'id', description: 'Public skillId of the skill' })
   @ApiOkResponse({ description: 'Skill document' })
   async findOne(@Param('id') id: string) {
     return this.skills.findById(id);
@@ -79,7 +79,7 @@ export class SkillsController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a skill (admin)' })
-  @ApiParam({ name: 'id', description: 'Mongo ObjectId of the skill' })
+  @ApiParam({ name: 'id', description: 'Mongo ObjectId of the skill to update' })
   @ApiOkResponse({ description: 'Updated skill document' })
   @UseGuards(AdminApiKeyGuard)
   async update(@Param('id') id: string, @Body() dto: UpdateSkillDto) {
@@ -88,7 +88,7 @@ export class SkillsController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Deactivate a skill (admin)' })
-  @ApiParam({ name: 'id', description: 'Mongo ObjectId of the skill' })
+  @ApiParam({ name: 'id', description: 'Mongo ObjectId of the skill to deactivate' })
   @ApiOkResponse({ description: 'Deactivation confirmation' })
   @UseGuards(AdminApiKeyGuard)
   async remove(@Param('id') id: string) {

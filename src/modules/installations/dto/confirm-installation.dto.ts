@@ -1,12 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsMongoId, IsObject, IsOptional, IsString, Matches } from 'class-validator';
+import { IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Matches } from 'class-validator';
 
 export class ConfirmInstallationDto {
   @ApiProperty({
-    description: 'Mongo ObjectId of the skill being installed',
-    example: '652f1f77bcf86cd799439011',
+    description: 'Public skillId of the skill being installed',
+    example: 'generic-dca-84532',
   })
-  @IsMongoId()
+  @IsString()
+  @IsNotEmpty()
   skillId!: string;
 
   @ApiProperty({

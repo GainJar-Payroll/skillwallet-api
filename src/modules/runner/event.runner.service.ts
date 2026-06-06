@@ -60,7 +60,7 @@ export class EventRunnerService implements OnModuleInit, OnModuleDestroy {
           onLogs: async () => {
             this.logger.log(`Event trigger fired for skill ${skill.name}`);
             const installations = (await this.installationsService.findActiveBySkillId(
-              skill._id.toString(),
+              skill.skillId,
             )) as Array<WithId<Installation>>;
             for (const inst of installations) {
               try {

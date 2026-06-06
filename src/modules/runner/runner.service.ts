@@ -34,8 +34,8 @@ export class RunnerService {
     const skillId =
       typeof installation.skillId === 'object' &&
       installation.skillId !== null &&
-      '_id' in installation.skillId
-        ? String((installation.skillId as { _id: unknown })._id)
+      'skillId' in installation.skillId
+        ? String((installation.skillId as { skillId: unknown }).skillId)
         : String(installation.skillId);
 
     const skill = await this.skillsService.findById(skillId);

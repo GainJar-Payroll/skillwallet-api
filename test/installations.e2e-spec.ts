@@ -104,7 +104,7 @@ describe('Installations e2e', () => {
     const res = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -118,7 +118,7 @@ describe('Installations e2e', () => {
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -131,7 +131,7 @@ describe('Installations e2e', () => {
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: salt,
@@ -147,7 +147,7 @@ describe('Installations e2e', () => {
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -155,7 +155,7 @@ describe('Installations e2e', () => {
     await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
@@ -173,7 +173,7 @@ describe('Installations e2e', () => {
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -181,7 +181,7 @@ describe('Installations e2e', () => {
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
@@ -206,7 +206,7 @@ describe('Installations e2e', () => {
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -214,7 +214,7 @@ describe('Installations e2e', () => {
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
@@ -232,7 +232,7 @@ describe('Installations e2e', () => {
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -240,7 +240,7 @@ describe('Installations e2e', () => {
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
@@ -258,7 +258,7 @@ describe('Installations e2e', () => {
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -266,7 +266,7 @@ describe('Installations e2e', () => {
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,
@@ -284,7 +284,7 @@ describe('Installations e2e', () => {
     const prepare = await request(app.getHttpServer())
       .post('/installations/prepare')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       })
@@ -292,7 +292,7 @@ describe('Installations e2e', () => {
     const confirm = await request(app.getHttpServer())
       .post('/installations/confirm')
       .send({
-        skillId: String(skill._id),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: prepare.body.salt,

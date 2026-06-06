@@ -49,6 +49,7 @@ describe('Skills e2e', () => {
   it('POST /skills creates a cron skill', async () => {
     const dto = {
       name: 'DCA Daily',
+      skillId: 'dca-daily-84532',
       description: 'Daily DCA into WETH',
       iconUrl: 'https://example.com/icon.png',
       runType: 'cron',
@@ -83,6 +84,7 @@ describe('Skills e2e', () => {
       .set(apiKey)
       .send({
         name: 'S',
+        skillId: 'skill-s-84532',
         description: 'S',
         iconUrl: 'S',
         runType: 'cron',
@@ -107,6 +109,7 @@ describe('Skills e2e', () => {
       .set(apiKey)
       .send({
         name: 'A',
+        skillId: 'skill-a-84532',
         description: 'A',
         iconUrl: 'A',
         runType: 'cron',
@@ -129,6 +132,7 @@ describe('Skills e2e', () => {
       .set(apiKey)
       .send({
         name: 'B',
+        skillId: 'skill-b-84532',
         description: 'B',
         iconUrl: 'B',
         runType: 'cron',

@@ -85,10 +85,7 @@ if (DEFAULT_CHAIN_ID !== baseSepolia.id) {
   throw new Error(`This proof expects DEFAULT_CHAIN_ID=84532, got ${DEFAULT_CHAIN_ID}`);
 }
 
-const DEPLOY_SALT =
-  '0x0000000000000000000000000000000000000000000000000000000000000888' as const;
-
-const PREFERRED_SKILL_ID = 'direct-router-dca';
+const DEPLOY_SALT = '0x0000000000000000000000000000000000000000000000000000000000000888' as const;
 
 const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as const;
 const WETH = '0x4200000000000000000000000000000000000006' as const;
@@ -472,24 +469,12 @@ function normalizeSkillsResponse(body: any): any[] {
 }
 
 function getSkillIdentifier(skill: any) {
-  return skill?.skillId ?? skill?._id ?? skill?.id ?? '';
+  return skill?.skillId;
 }
 
 function selectSkill(skills: any[]) {
-  const byPreferredId = skills.find((skill) => getSkillIdentifier(skill) === PREFERRED_SKILL_ID);
-  if (byPreferredId) return byPreferredId;
-
-  const byMetadataKind = skills.find(
-    (skill) => String(skill?.metadata?.kind ?? '').toLowerCase() === 'dca',
-  );
-  if (byMetadataKind) return byMetadataKind;
-
-  const byName = skills.find((skill) =>
-    String(skill?.name ?? '')
-      .toLowerCase()
-      .includes('dca'),
-  );
-  if (byName) return byName;
+  const bySkillId = skills.find((skill) => skill.skillId == `generic-dca-${DEFAULT_CHAIN_ID}`);
+  if (bySkillId) return bySkillId;
 
   return skills[0];
 }
@@ -500,7 +485,6 @@ function buildDcaConfig(smartAccountAddress: Address, selectedSkill: any) {
   )?.defaultValue;
 
   return {
-    type: 'direct-router-dca',
     tokenIn: { address: USDC },
     tokenOut: { address: WETH },
     amountPerRun: AMOUNT_IN_USDC_ATOMS || amountDefault || '100000',
@@ -785,7 +769,7 @@ async function main() {
     ONESHOT_RELAYER_URL: redactUrl(ONESHOT_RELAYER_URL),
     DEFAULT_CHAIN_ID,
     PROOF_PRIVATE_KEY: 'REDACTED',
-    PREFERRED_SKILL_ID,
+    // PREFERRED_SKILL_ID,
     DEPLOY_SALT,
     USDC,
     WETH,
@@ -871,7 +855,7 @@ async function main() {
   }
 
   log('SKILL_SELECTED_FROM_BACKEND', {
-    preferred: PREFERRED_SKILL_ID,
+    // preferred: PREFERRED_SKILL_ID,
     selectedIdentifier: skillId,
     selectedSkill,
   });

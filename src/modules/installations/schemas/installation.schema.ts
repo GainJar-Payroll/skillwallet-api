@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document } from 'mongoose';
 
 export class ExecutionRecord {
   executedAt!: Date;
@@ -21,8 +21,8 @@ export class Installation {
   @Prop({ required: true, index: true })
   smartAccountAddress!: string;
 
-  @Prop({ required: true, type: Types.ObjectId, ref: 'Skill', index: true })
-  skillId!: Types.ObjectId;
+  @Prop({ required: true, type: String, index: true })
+  skillId!: string;
 
   @Prop({ required: true, type: Object })
   signedDelegation!: Record<string, unknown>;

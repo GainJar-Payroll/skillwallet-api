@@ -33,7 +33,7 @@ export class CronRunnerService {
       const populatedSkill = inst.skillId as unknown as WithId<Skill>;
       if (populatedSkill?.runType && populatedSkill.runType !== 'cron') continue;
 
-      const skillIdStr = populatedSkill?._id?.toString?.() ?? (inst.skillId as unknown as string);
+      const skillIdStr = populatedSkill?.skillId?.toString?.() ?? (inst.skillId as unknown as string);
 
       try {
         await this.runnerService.executeInstallation(inst._id.toString());

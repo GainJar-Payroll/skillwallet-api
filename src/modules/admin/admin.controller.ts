@@ -83,14 +83,12 @@ export class AdminController {
       type: 'object',
       properties: {
         address: { type: 'string', example: '0x90F79bf6EB2c4f870365E785982E1f101E93b906' },
-        chainId: { type: 'number', example: 84532 },
       },
     },
   })
   async executor() {
     return {
       address: this.executorService.getAddress(),
-      chainId: this.config.get<number>('defaultChainId') ?? 84532,
     };
   }
 

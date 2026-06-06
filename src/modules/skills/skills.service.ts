@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { FilterQuery, Model } from 'mongoose';
+import { FilterQuery, isValidObjectId, Model } from 'mongoose';
 import { Skill, SkillDocument } from './schemas/skill.schema';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
@@ -36,9 +36,16 @@ export class SkillsService {
   }
 
   async findById(id: string): Promise<Skill> {
-    const skill = await this.skillModel.findById(id).lean().exec();
-    if (!skill) throw new NotFoundException('Skill not found');
-    return skill;
+    const skill = await this.skillModel.findOne({ skillId: id }).lean().exec();
+
+    if (skill) return skill;
+
+    if (isValidObjectId(id)) {
+      const byMongoId = await this.skillModel.findById(id).lean().exec();
+      if (byMongoId) return byMongoId;
+    }
+
+    throw new NotFoundException('Skill not found');
   }
 
   async findByIdRaw(id: string): Promise<SkillDocument | null> {
@@ -61,6 +68,7 @@ export class SkillsService {
     if (!existing) throw new NotFoundException('Skill not found');
 
     const merged: CreateSkillDto = {
+      skillId: existing.skillId,
       name: dto.name ?? existing.name,
       description: dto.description ?? existing.description,
       iconUrl: dto.iconUrl ?? existing.iconUrl,

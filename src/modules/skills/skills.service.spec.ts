@@ -33,7 +33,7 @@ describe('SkillsService', () => {
   describe('findById', () => {
     it('returns a seeded skill', async () => {
       const s = model.__seed(buildSkill());
-      const out = await service.findById(String(s._id));
+      const out = await service.findById(s.skillId);
       expect(out.name).toBe('DCA Daily');
     });
 

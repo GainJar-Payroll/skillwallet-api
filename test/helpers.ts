@@ -21,6 +21,7 @@ export const DCA_DAILY_SCOPE = {
 export function buildSkill(overrides: Partial<Skill> = {}): Skill {
   return {
     name: 'DCA Daily',
+    skillId: 'generic-dca-84532',
     description: 'Daily DCA',
     iconUrl: 'https://example.com/icon.png',
     runType: 'cron',
@@ -40,7 +41,7 @@ export function buildSkill(overrides: Partial<Skill> = {}): Skill {
 export function buildInstallation(overrides: Partial<Installation> = {}): Installation {
   return {
     userAddress: TEST_USER,
-    skillId: new Types.ObjectId(),
+    skillId: 'generic-dca-84532',
     signedDelegation: {
       delegate: TEST_EXECUTOR,
       delegator: TEST_SMART_ACCOUNT,
@@ -77,6 +78,13 @@ export function buildMockSkillModel() {
       }),
       lean: () => ({ exec: jest.fn().mockResolvedValue(Object.values(data)) }),
     }),
+    findOne: jest.fn().mockImplementation((filter: { skillId?: string }) => ({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue(
+          Object.values(data).find((d) => d.skillId === filter.skillId) ?? null,
+        ),
+      }),
+    })),
     findById: jest.fn().mockImplementation((id: string) => ({
       lean: () => ({
         exec: jest.fn().mockResolvedValue(
@@ -174,7 +182,7 @@ export function buildMockInstallationModel() {
       data[String(created._id)] = created;
       return wrap(created);
     }),
-    findOne: jest.fn().mockImplementation((filter: { userAddress?: string; smartAccountAddress?: string; skillId?: Types.ObjectId; status?: { $in?: string[] } }) => ({
+    findOne: jest.fn().mockImplementation((filter: { userAddress?: string; smartAccountAddress?: string; skillId?: string; status?: { $in?: string[] } }) => ({
       lean: () => ({
         exec: jest.fn().mockImplementation(async () => {
           return Object.values(data).find((i) => {

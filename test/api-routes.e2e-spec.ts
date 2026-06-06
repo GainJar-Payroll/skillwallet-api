@@ -143,7 +143,7 @@ describe('API route smoke e2e', () => {
     expect(list.body.data[0].name).toBe('Generic DCA');
 
     await request(app.getHttpServer())
-      .get(`/skills/${list.body.data[0]._id}`)
+      .get(`/skills/${list.body.data[0].skillId}`)
       .expect(200);
   });
 
@@ -153,7 +153,7 @@ describe('API route smoke e2e', () => {
       .set(apiKey)
       .expect(201);
     const skills = await request(app.getHttpServer()).get('/skills').expect(200);
-    const skillId = skills.body.data[0]._id;
+    const skillId = skills.body.data[0].skillId;
 
     await request(app.getHttpServer())
       .post('/installations/prepare')

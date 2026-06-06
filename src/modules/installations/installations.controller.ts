@@ -64,10 +64,7 @@ export class InstallationsController {
     @Query('chainId') chainId?: string,
     @Query('smartAccountAddress') smartAccountAddress?: string,
   ) {
-    const data = await this.installations.findByUser(userAddress, {
-      chainId: chainId ? Number(chainId) : undefined,
-      smartAccountAddress,
-    });
+    const data = await this.installations.findByUser(userAddress);
 
     return { data };
   }
