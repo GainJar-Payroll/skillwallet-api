@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { join } from 'node:path';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -39,6 +40,15 @@ async function bootstrap(): Promise<void> {
     exposedHeaders: ['PAYMENT-REQUIRED'],
     maxAge: 86400,
   });
+
+  app.useStaticAssets(join(process.cwd(), 'public', 'proof-app'), {
+    prefix: '/proof-app',
+    setHeaders: (res, path) => {
+      if (path.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache')
+      }
+    },
+  })
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('SkillWallet Backend API')

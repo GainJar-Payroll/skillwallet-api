@@ -1,5 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import type {
+  EventSkillTriggerConfig,
+  SkillExecutionConfig,
+  SkillHistoryConfig,
+  SkillLimitsConfig,
+  SkillRunType,
+  SkillTriggerConfig,
+} from '../skill-config.types';
 
 export class SkillParameter {
   key!: string;
@@ -11,10 +19,14 @@ export class SkillParameter {
   description?: string;
 }
 
-export class EventTriggerConfig {
+export class EventTriggerConfig implements EventSkillTriggerConfig {
+  type!: 'event-trigger';
+  chainId?: number;
   contractAddress!: string;
   eventSignature!: string;
-  filterArgs?: Record<string, string>;
+  filterArgs?: Record<string, unknown>;
+  confirmations?: number;
+  dedupeKey?: 'txHash-logIndex';
 }
 
 export class DelegationScopeConfig {
@@ -43,14 +55,25 @@ export class Skill {
   @Prop({ required: true })
   iconUrl!: string;
 
-  @Prop({ required: true, enum: ['cron', 'event-trigger'] })
-  runType!: 'cron' | 'event-trigger';
+  @Prop({ required: true, type: String, enum: ['cron', 'event-trigger'] })
+  runType!: SkillRunType;
 
   @Prop()
   cronExpression?: string;
 
   @Prop({ type: Object })
   eventTriggerConfig?: EventTriggerConfig;
+
+  @Prop({ type: Object })
+  trigger?: SkillTriggerConfig;
+
+  @Prop({ type: Object })
+  execution?: SkillExecutionConfig;
+
+  @Prop({ type: Object })
+  limits?: SkillLimitsConfig;
+
+  history?: SkillHistoryConfig;
 
   @Prop({ required: true, index: true })
   chainId!: number;

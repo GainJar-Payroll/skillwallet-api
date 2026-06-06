@@ -2,13 +2,44 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export class ExecutionRecord {
+  executionId?: string;
   executedAt!: Date;
-  status!: 'pending' | 'submitted' | 'confirmed' | 'failed';
+  completedAt?: Date;
+  status!: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'skipped';
+  trigger?: ExecutionTriggerRecord;
+  spend?: ExecutionSpendRecord;
   oneShotTaskId?: string;
   txHash?: string;
   errorMessage?: string;
+  skippedReason?: string;
   aiContext?: string;
   newsContext?: string;
+}
+
+export type ExecutionTriggerType = 'cron' | 'event-trigger';
+
+export class ExecutionTriggerEventRecord {
+  chainId!: number;
+  contractAddress!: string;
+  eventSignature!: string;
+  txHash?: string;
+  logIndex?: number;
+  blockNumber?: string;
+  args?: Record<string, unknown>;
+}
+
+export class ExecutionTriggerRecord {
+  type!: ExecutionTriggerType;
+  event?: ExecutionTriggerEventRecord;
+}
+
+export class ExecutionSpendRecord {
+  tokenAddress!: string;
+  requestedAmount!: string;
+  actualAmount!: string;
+  dailyLimit?: string;
+  periodKey?: string;
+  reservationId?: string;
 }
 
 export type InstallationDocument = Installation & Document;

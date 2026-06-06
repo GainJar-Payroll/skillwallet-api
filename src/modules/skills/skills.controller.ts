@@ -47,8 +47,25 @@ export class SkillsController {
     type: Number,
     description: 'Filter skills by EVM chain id, for example 84532 or 8453.',
   })
+  @ApiQuery({
+    name: 'userAddress',
+    required: false,
+    type: String,
+    description: 'Optional EOA address used to include installation summary data.',
+  })
+  @ApiQuery({
+    name: 'smartAccountAddress',
+    required: false,
+    type: String,
+    description: 'Optional smart account address used to include installation summary data.',
+  })
   @ApiOkResponse({ description: 'Catalog of skills wrapped in { data }' })
-  async findAll(@Query('active') active?: string, @Query('chainId') chainId?: string) {
+  async findAll(
+    @Query('active') active?: string,
+    @Query('chainId') chainId?: string,
+    @Query('userAddress') userAddress?: string,
+    @Query('smartAccountAddress') smartAccountAddress?: string,
+  ) {
     const onlyActive = active === undefined ? true : active === 'true';
 
     const parsedChainId = chainId === undefined || chainId === '' ? undefined : Number(chainId);
@@ -56,6 +73,8 @@ export class SkillsController {
     const data = await this.skills.findAll({
       onlyActive,
       chainId: parsedChainId,
+      userAddress,
+      smartAccountAddress,
     });
 
     return { data };

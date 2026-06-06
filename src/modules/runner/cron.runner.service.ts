@@ -7,6 +7,7 @@ import { InstallationsService } from '../installations/installations.service';
 import { SkillsService } from '../skills/skills.service';
 import { Installation } from '../installations/schemas/installation.schema';
 import { Skill } from '../skills/schemas/skill.schema';
+import { normalizeSkillTrigger } from '../skills/skill-config.util';
 
 type WithId<T> = T & { _id: { toString(): string } };
 
@@ -38,8 +39,9 @@ export class CronRunnerService {
       try {
         await this.runnerService.executeInstallation(inst._id.toString());
         const fresh = await this.skillsService.findById(skillIdStr);
-        if (fresh.cronExpression) {
-          const next = parseExpression(fresh.cronExpression, { currentDate: new Date() });
+        const trigger = normalizeSkillTrigger(fresh);
+        if (trigger?.type === 'cron') {
+          const next = parseExpression(trigger.cronExpression, { currentDate: new Date() });
           await this.installationsService.updateNextExecution(
             inst._id.toString(),
             next.next().toDate(),

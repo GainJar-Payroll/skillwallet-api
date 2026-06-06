@@ -64,7 +64,12 @@ export class InstallationsController {
     @Query('chainId') chainId?: string,
     @Query('smartAccountAddress') smartAccountAddress?: string,
   ) {
-    const data = await this.installations.findByUser(userAddress);
+    const parsedChainId = chainId === undefined || chainId === '' ? undefined : Number(chainId);
+
+    const data = await this.installations.findByUser(userAddress, {
+      chainId: parsedChainId,
+      smartAccountAddress,
+    });
 
     return { data };
   }
@@ -75,6 +80,17 @@ export class InstallationsController {
   @ApiOkResponse({ description: 'Installation document with executions history' })
   async findOne(@Param('id') id: string) {
     return this.installations.findById(id);
+  }
+
+  @Get(':id/executions')
+  @ApiOperation({ summary: 'Get execution history for an installation' })
+  @ApiParam({ name: 'id', description: 'Installation Mongo ObjectId' })
+  @ApiOkResponse({ description: 'Execution history in reverse chronological order' })
+  async findExecutions(@Param('id') id: string) {
+    return {
+      installationId: id,
+      data: await this.installations.findExecutions(id),
+    };
   }
 
   @Patch(':id/pause')

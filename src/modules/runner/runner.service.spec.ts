@@ -6,6 +6,7 @@ import { SWAP_ROUTER_02_ABI } from './abis';
 import { SkillsService } from '../skills/skills.service';
 import { InstallationsService } from '../installations/installations.service';
 import { OneShotService } from '../oneshot/oneshot.service';
+import { SpendReservationsService } from '../spend-reservations/spend-reservations.service';
 import { X402Service } from '../x402/x402.service';
 import { VeniceService } from '../venice/venice.service';
 import { getChainConfig } from '../../config/chains.config';
@@ -23,8 +24,10 @@ describe('RunnerService', () => {
     findById: jest.Mock;
     appendExecution: jest.Mock;
     updateLastExecution: jest.Mock;
+    updateExecution: jest.Mock;
   };
   let oneShot: { getCapabilities: jest.Mock; send7710Transaction: jest.Mock; poll: jest.Mock };
+  let spendReservations: { confirmReservation: jest.Mock; releaseReservation: jest.Mock };
   let x402: { fetch: jest.Mock };
   let venice: { summariseMarketContext: jest.Mock };
   let config: { get: jest.Mock };
@@ -38,6 +41,7 @@ describe('RunnerService', () => {
       findById: jest.fn(),
       appendExecution: jest.fn(),
       updateLastExecution: jest.fn(),
+      updateExecution: jest.fn(),
     };
     oneShot = {
       getCapabilities: jest.fn().mockResolvedValue({
@@ -45,6 +49,10 @@ describe('RunnerService', () => {
       }),
       send7710Transaction: jest.fn().mockResolvedValue('0x' + 'aa'.repeat(32)),
       poll: jest.fn().mockResolvedValue({ status: 200, hash: '0xH' }),
+    };
+    spendReservations = {
+      confirmReservation: jest.fn(),
+      releaseReservation: jest.fn(),
     };
     x402 = { fetch: jest.fn().mockResolvedValue({ headlines: 'BTC up' }) };
     venice = { summariseMarketContext: jest.fn().mockResolvedValue('AI summary') };
@@ -57,6 +65,7 @@ describe('RunnerService', () => {
         { provide: SkillsService, useValue: skills },
         { provide: InstallationsService, useValue: installations },
         { provide: OneShotService, useValue: oneShot },
+        { provide: SpendReservationsService, useValue: spendReservations },
         { provide: X402Service, useValue: x402 },
         { provide: VeniceService, useValue: venice },
       ],
@@ -134,10 +143,20 @@ describe('RunnerService', () => {
     it('runs DCA path successfully', async () => {
       const inst = buildInstallation();
       installations.findById.mockResolvedValue(inst);
-      skills.findById.mockResolvedValue(buildSkill());
+      skills.findById.mockResolvedValue(
+        buildSkill({ execution: { kind: 'dca-uniswap-v3' } as never }),
+      );
       await service.executeInstallation(String(inst._id));
       expect(oneShot.send7710Transaction).toHaveBeenCalled();
       expect(installations.appendExecution).toHaveBeenCalled();
+    });
+
+    it('falls back to legacy metadata.kind for DCA dispatch', async () => {
+      const inst = buildInstallation();
+      installations.findById.mockResolvedValue(inst);
+      skills.findById.mockResolvedValue(buildSkill({ name: 'Weird', metadata: { kind: 'dca' } }));
+      await service.executeInstallation(String(inst._id));
+      expect(oneShot.send7710Transaction).toHaveBeenCalled();
     });
 
     it('runs GM path successfully', async () => {
@@ -177,6 +196,30 @@ describe('RunnerService', () => {
         String(inst._id),
         expect.objectContaining({ status: 'failed', errorMessage: 'relayer down' }),
       );
+    });
+
+    it('uses event-provided spend amount for DCA executions', async () => {
+      const inst = buildInstallation();
+      installations.findById.mockResolvedValue(inst);
+      skills.findById.mockResolvedValue(
+        buildSkill({ execution: { kind: 'dca-uniswap-v3', defaultFeeTier: 3000 } as never }),
+      );
+
+      await service.executeInstallation(String(inst._id), {
+        spend: {
+          tokenAddress: chainConfig.tokens.usdc,
+          requestedAmount: '1000000',
+          actualAmount: '12345',
+        },
+      });
+
+      const sendCall = oneShot.send7710Transaction.mock.calls[0][0];
+      const executions = sendCall.transactions[0].executions;
+      const swap = executions[2];
+      const decoded = decodeFunctionData({ abi: SWAP_ROUTER_02_ABI, data: swap.data });
+      const params = decoded.args?.[0] as { amountIn: bigint; fee: number };
+      expect(params.amountIn).toBe(12345n);
+      expect(params.fee).toBe(3000);
     });
   });
 });

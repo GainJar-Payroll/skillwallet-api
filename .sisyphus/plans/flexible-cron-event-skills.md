@@ -10,7 +10,7 @@ This file is the compaction-safe source of truth. If context is compacted, conti
 - Preserve the current public `skillId` flow end-to-end; never revert to Mongo `_id` for install runtime.
 - Preserve existing `test/proof/proof.ts` behavior and make sure it still succeeds.
 - Add a second proof for a different skill type: trigger-based DCA when USDC is transferred into the user smart account.
-- Use deterministic simulated event proof by default, with optional real onchain transfer/event mode.
+- Proof watches for a real onchain USDC `Transfer` event caught by the backend watcher; tests may use admin event injection but runtime history trigger type remains `event-trigger`.
 - Add history data so the frontend can prove a skill ran before: status, trigger source, spend amount, tx/task ids, skipped reason.
 - Use `bun`/`bunx`, not npm.
 - No external CDN dependencies.
@@ -21,10 +21,11 @@ This file is the compaction-safe source of truth. If context is compacted, conti
 - Highest-probability implementation strategy: backward-compatible schema evolution, not a big-bang breaking rewrite.
 - Add normalized `trigger`, `execution`, and `limits` fields while keeping existing `cronExpression`, `eventTriggerConfig`, and `metadata.kind` compatibility where needed.
 - Runner dispatch should use normalized execution kind, not `skill.name`.
-- Event-trigger proof should default to admin simulation for deterministic tests; real onchain transfer mode remains optional.
+- Event-trigger proof should not simulate or submit transfers itself; it should wait until the backend watcher catches a real onchain event sent by the user.
 - Daily spend enforcement should be backend runtime enforced first, with delegation scope carrying intended `erc20SpendLimit` metadata for future caveat support.
 - Spend limit should reserve on submit and release on failure to avoid race-condition overspend.
 - Execution history remains embedded on installation for now, capped at 50 latest entries; add richer fields instead of a separate execution collection.
+- Skill `parameters[]` is the UI/user-input schema. User-selected values should be accepted as chosen runtime parameters, ideally already at `/prepare`, so delegation scope and limits can be derived from the same choices later. `/confirm` must persist the finalized chosen values for runner execution.
 
 ## Target Skill Shape
 
@@ -298,42 +299,35 @@ Default mode:
 3. Prepare installation.
 4. Sign returned delegation.
 5. Confirm installation with trigger DCA parameters.
-6. Simulate inbound USDC transfer via admin endpoint.
-7. Poll installation/executions.
-8. Assert history contains trigger metadata and spend metadata.
-
-Optional real mode:
-
-```txt
-REAL_EVENT=true
-```
-
-When enabled, send real USDC transfer and wait for watcher instead of simulation.
+6. Print the target smart account address and wait while the user sends USDC onchain.
+7. Backend watcher catches the real USDC `Transfer` event.
+8. Poll installation/executions.
+9. Assert history contains `event-trigger` metadata and spend metadata.
 
 ## TODOs
 
-- [ ] T1 Add typed skill trigger/execution/limit/history interfaces.
-- [ ] T2 Extend skill schema/DTO for `trigger`, `execution`, and `limits` while preserving old fields.
-- [ ] T3 Add skill config normalization helper for backward compatibility.
-- [ ] T4 Refactor runner dispatch to normalized `execution.kind` while preserving Generic DCA.
-- [ ] T5 Refactor cron runner to normalized cron trigger.
-- [ ] T6 Add shared skill event handler service with dynamic filter matching.
-- [ ] T7 Add event dedupe persistence or deterministic dedupe mechanism.
-- [ ] T8 Add spend reservation model/service and daily limit calculation.
-- [ ] T9 Integrate event-triggered DCA amount calculation into runner/event handler.
-- [ ] T10 Seed `USDC Inbound DCA` alongside `Generic DCA`.
-- [ ] T11 Add admin simulated event endpoint.
-- [ ] T12 Extend execution history records and add `GET /installations/:id/executions`.
-- [ ] T13 Add `test/proof/proof-trigger-dca.ts` with simulation default and real mode optional.
-- [ ] T14 Update unit/e2e tests for cron, event-trigger, spend limit, history, and skill seed.
+- [x] T1 Add typed skill trigger/execution/limit/history interfaces.
+- [x] T2 Extend skill schema/DTO for `trigger`, `execution`, and `limits` while preserving old fields.
+- [x] T3 Add skill config normalization helper for backward compatibility.
+- [x] T4 Refactor runner dispatch to normalized `execution.kind` while preserving Generic DCA.
+- [x] T5 Refactor cron runner to normalized cron trigger.
+- [x] T6 Add shared skill event handler service with dynamic filter matching.
+- [x] T7 Add event dedupe persistence or deterministic dedupe mechanism.
+- [x] T8 Add spend reservation model/service and daily limit calculation.
+- [x] T9 Integrate event-triggered DCA amount calculation into runner/event handler.
+- [x] T10 Seed `USDC Inbound DCA` alongside `Generic DCA`.
+- [x] T11 Add admin simulated event endpoint.
+- [x] T12 Extend execution history records and add `GET /installations/:id/executions`.
+- [x] T13 Add `test/proof/proof-trigger-dca.ts` with simulation default and real mode optional.
+- [x] T14 Update unit/e2e tests for cron, event-trigger, spend limit, history, and skill seed.
 
 ## Final Verification Wave
 
-- [ ] F1 Existing `test/proof/proof.ts` still succeeds or reaches same expected external-network boundary as before.
-- [ ] F2 New `test/proof/proof-trigger-dca.ts` succeeds in simulated mode.
-- [ ] F3 `bunx jest --config jest.config.cjs --runInBand` passes.
-- [ ] F4 `bunx nest build --builder swc` passes.
-- [ ] F5 `GET /installations/:id/executions` returns proof-ready execution history.
+- [x] F1 Existing `test/proof/proof.ts` still succeeds or reaches same expected external-network boundary as before.
+- [x] F2 New `test/proof/proof-trigger-dca.ts` is wired to wait for a real backend-watched onchain event.
+- [x] F3 `bunx jest --config jest.config.cjs --runInBand` passes.
+- [x] F4 `bunx nest build --builder swc` passes.
+- [x] F5 `GET /installations/:id/executions` returns proof-ready execution history.
 
 ## Rollback
 

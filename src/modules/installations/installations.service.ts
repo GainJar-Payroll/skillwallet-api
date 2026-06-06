@@ -22,6 +22,11 @@ export interface PrepareInstallationResponse {
   chainId: number;
 }
 
+export interface FindInstallationsOptions {
+  chainId?: number;
+  smartAccountAddress?: string;
+}
+
 @Injectable()
 export class InstallationsService {
   private readonly skillPopulate: PopulateOptions = {
@@ -142,11 +147,31 @@ export class InstallationsService {
     return created.toObject();
   }
 
-  async findByUser(userAddress: string): Promise<Installation[]> {
+  async findByUser(userAddress: string, options: FindInstallationsOptions = {}): Promise<Installation[]> {
     const checksummed = getAddress(userAddress);
 
+    if (options.chainId !== undefined && !Number.isInteger(options.chainId)) {
+      throw new BadRequestException('chainId must be an integer');
+    }
+
+    const filter: {
+      userAddress: string;
+      chainId?: number;
+      smartAccountAddress?: string;
+    } = {
+      userAddress: checksummed,
+    };
+
+    if (options.chainId !== undefined) {
+      filter.chainId = options.chainId;
+    }
+
+    if (options.smartAccountAddress) {
+      filter.smartAccountAddress = getAddress(options.smartAccountAddress);
+    }
+
     return this.installationModel
-      .find({ userAddress: checksummed })
+      .find(filter)
       .populate(this.skillPopulate)
       .lean()
       .exec();
@@ -197,12 +222,40 @@ export class InstallationsService {
     await doc.save();
   }
 
+  async findExecutions(id: string): Promise<ExecutionRecord[]> {
+    const doc = await this.installationModel.findById(id).lean().exec();
+
+    if (!doc) throw new NotFoundException('Installation not found');
+
+    return doc.executions ?? [];
+  }
+
   async updateLastExecution(id: string, patch: Partial<ExecutionRecord>): Promise<void> {
     const doc = await this.installationModel.findById(id).exec();
 
     if (!doc) return;
 
     const target = doc.executions[0];
+
+    if (!target) return;
+
+    Object.assign(target, patch);
+
+    doc.markModified('executions');
+
+    await doc.save();
+  }
+
+  async updateExecution(
+    id: string,
+    executionId: string,
+    patch: Partial<ExecutionRecord>,
+  ): Promise<void> {
+    const doc = await this.installationModel.findById(id).exec();
+
+    if (!doc) return;
+
+    const target = doc.executions.find((execution) => execution.executionId === executionId);
 
     if (!target) return;
 

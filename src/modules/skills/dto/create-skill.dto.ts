@@ -8,6 +8,12 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
+import type {
+  SkillExecutionConfig,
+  SkillLimitsConfig,
+  SkillRunType,
+  SkillTriggerConfig,
+} from '../skill-config.types';
 
 export class CreateSkillDto {
   @ApiProperty({ description: 'Display name of the skill', example: 'Generic DCA' })
@@ -42,7 +48,7 @@ export class CreateSkillDto {
     example: 'cron',
   })
   @IsIn(['cron', 'event-trigger'])
-  runType!: 'cron' | 'event-trigger';
+  runType!: SkillRunType;
 
   @ApiPropertyOptional({
     description: 'cron expression for cron-based skills (5-field Unix cron)',
@@ -61,6 +67,24 @@ export class CreateSkillDto {
   @IsObject()
   eventTriggerConfig?: Record<string, unknown>;
 
+  @ApiPropertyOptional({
+    description: 'Normalized trigger configuration for cron or event-trigger skills',
+    type: 'object',
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @IsObject()
+  trigger?: SkillTriggerConfig;
+
+  @ApiPropertyOptional({
+    description: 'Normalized execution configuration used by the runner',
+    type: 'object',
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @IsObject()
+  execution?: SkillExecutionConfig;
+
   @ApiProperty({ description: 'EVM chain id where the skill runs', example: 84532 })
   @IsNumber()
   chainId!: number;
@@ -73,6 +97,15 @@ export class CreateSkillDto {
   })
   @IsObject()
   delegationScope!: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'Optional runtime limits for execution frequency or spend caps',
+    type: 'object',
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @IsObject()
+  limits?: SkillLimitsConfig;
 
   @ApiPropertyOptional({
     description: 'Parameter declarations the UI renders',
