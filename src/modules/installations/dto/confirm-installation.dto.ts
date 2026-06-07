@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Matches } from 'class-validator';
+import type { SkillParameterInputPayload } from '../../skills/skill-parameter.types';
 
 export class ConfirmInstallationDto {
   @ApiProperty({
@@ -61,6 +62,5 @@ export class ConfirmInstallationDto {
     additionalProperties: true,
   })
   @IsOptional()
-  @IsObject()
-  parameters?: Record<string, unknown>;
+  parameters?: SkillParameterInputPayload;
 }

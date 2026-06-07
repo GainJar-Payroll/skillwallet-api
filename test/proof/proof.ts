@@ -871,13 +871,17 @@ async function main() {
   step('5. POST /installations/prepare');
 
   const dcaConfig = buildDcaConfig(smartAccountAddress, selectedSkill);
+  const dcaParameters = [
+    { key: 'outputToken', value: 'weth' },
+    { key: 'amountUsdc', value: AMOUNT_IN_USDC_ATOMS },
+  ];
 
   const prepareInput = {
     userAddress: owner,
     smartAccountAddress,
     chainId: DEFAULT_CHAIN_ID,
     skillId,
-    config: dcaConfig,
+    parameters: dcaParameters,
   };
 
   let installationId = '';
@@ -957,7 +961,7 @@ async function main() {
       skillId,
       signedDelegation,
       delegationSalt,
-      parameters: dcaConfig,
+      parameters: dcaParameters,
     };
 
     const confirmed = await requestJson<InstallationResponse>('/installations/confirm', {

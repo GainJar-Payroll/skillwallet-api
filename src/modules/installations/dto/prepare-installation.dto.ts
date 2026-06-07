@@ -7,6 +7,7 @@ import {
   IsString,
   Matches,
 } from 'class-validator';
+import type { SkillParameterInputPayload } from '../../skills/skill-parameter.types';
 
 export class PrepareInstallationDto {
   @ApiProperty({
@@ -60,6 +61,5 @@ export class PrepareInstallationDto {
     additionalProperties: true,
   })
   @IsOptional()
-  @IsObject()
-  parameters?: Record<string, unknown>;
+  parameters?: SkillParameterInputPayload;
 }

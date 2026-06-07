@@ -143,6 +143,149 @@ describe('Installations e2e', () => {
     expect(confirm.body.status).toBe('active');
   });
 
+  it('POST /installations/prepare accepts canonical parameter entries', async () => {
+    const skill = await seedSkill();
+
+    await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        parameters: [
+          { key: 'amountUsdc', value: '2500000' },
+          { key: 'outputToken', value: 'weth' },
+        ],
+      })
+      .expect(201);
+  });
+
+  it('POST /installations/prepare accepts legacy object parameters', async () => {
+    const skill = await seedSkill();
+
+    await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        parameters: { amountUsdc: '2500000', outputToken: 'cbBtc' },
+      })
+      .expect(201);
+  });
+
+  it('POST /installations/prepare rejects invalid select parameters', async () => {
+    const skill = await seedSkill();
+
+    await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        parameters: [{ key: 'outputToken', value: 'doge' }],
+      })
+      .expect(400);
+  });
+
+  it('POST /installations/prepare rejects unknown parameter keys', async () => {
+    const skill = await seedSkill();
+
+    await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        parameters: [{ key: 'tokenOut', value: { address: TEST_USER } }],
+      })
+      .expect(400);
+  });
+
+  it('POST /installations/prepare rejects duplicate parameter keys', async () => {
+    const skill = await seedSkill();
+
+    await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        parameters: [
+          { key: 'outputToken', value: 'weth' },
+          { key: 'outputToken', value: 'cbBtc' },
+        ],
+      })
+      .expect(400);
+  });
+
+  it('POST /installations/prepare rejects invalid number parameters', async () => {
+    const skill = await seedSkill();
+
+    await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        parameters: [{ key: 'amountUsdc', value: 'abc' }],
+      })
+      .expect(400);
+  });
+
+  it('POST /installations/confirm persists normalized canonical parameters', async () => {
+    const skill = await seedSkill();
+    const prepare = await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
+      .expect(201);
+
+    const confirm = await request(app.getHttpServer())
+      .post('/installations/confirm')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        delegationSalt: prepare.body.salt,
+        signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
+        parameters: [
+          { key: 'amountUsdc', value: 12345 },
+          { key: 'outputToken', value: 'weth' },
+        ],
+      })
+      .expect(201);
+
+    expect(confirm.body.parameters).toEqual({ amountUsdc: '12345', outputToken: 'weth' });
+  });
+
+  it('POST /installations/confirm rejects tampered invalid parameters', async () => {
+    const skill = await seedSkill();
+    const prepare = await request(app.getHttpServer())
+      .post('/installations/prepare')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/installations/confirm')
+      .send({
+        skillId: skill.skillId,
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT,
+        delegationSalt: prepare.body.salt,
+        signedDelegation: { ...prepare.body.delegation, signature: '0x' + '22'.repeat(65) },
+        parameters: [{ key: 'outputToken', value: 'doge' }],
+      })
+      .expect(400);
+  });
+
   it('GET /installations?userAddress=... returns list', async () => {
     const skill = await seedSkill();
     const prepare = await request(app.getHttpServer())
