@@ -16,6 +16,13 @@ import {
 } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import {
+  findActiveOrPausedInstallation,
+  getSkillParameterDefinitions,
+  listInstallationsForUser,
+  ProofParameterError,
+  validateParametersClientSide,
+} from './proof-helpers';
 
 const PORT = Number(process.env.PORT ?? '3000');
 const API_BASE_URL = `http://localhost:${PORT}`;
@@ -733,6 +740,47 @@ async function main() {
 
   log('SKILL_SELECTED_FROM_BACKEND', { selectedSkill });
 
+  step('2a. Client-side validate chosen parameters against skill.parameters');
+
+  const skillDefinitions = getSkillParameterDefinitions(selectedSkill);
+  let normalizedParameters: Record<string, unknown>;
+  try {
+    normalizedParameters = validateParametersClientSide(skillDefinitions, CHOSEN_PARAMETERS);
+  } catch (err) {
+    if (err instanceof ProofParameterError) {
+      throw new Error(
+        `Client-side parameter validation failed for skill=${EVENT_SKILL_ID} key=${err.key ?? '?'}: ${err.message}`,
+      );
+    }
+    throw err;
+  }
+
+  log('CLIENT_SIDE_PARAMETERS_VALIDATED', {
+    skillId: EVENT_SKILL_ID,
+    submitted: CHOSEN_PARAMETERS,
+    normalized: normalizedParameters,
+  });
+
+  step('2b. Check GET /installations for existing (user, smartAccount, skillId)');
+
+  const existingInstallations = await listInstallationsForUser(requestJson, {
+    userAddress: owner,
+    chainId: DEFAULT_CHAIN_ID,
+    smartAccountAddress,
+  });
+
+  const existing = findActiveOrPausedInstallation(existingInstallations, {
+    userAddress: owner,
+    smartAccountAddress,
+    skillId: EVENT_SKILL_ID,
+  });
+
+  log('EXISTING_INSTALLATION_CHECK', {
+    skillId: EVENT_SKILL_ID,
+    installationsCount: existingInstallations.length,
+    existing: existing ?? null,
+  });
+
   step('3. POST /installations/prepare');
   const prepareInput = {
     userAddress: owner,
@@ -744,7 +792,17 @@ async function main() {
 
   let installationId = '';
 
-  try {
+  if (existing) {
+    installationId = getInstallationId(existing);
+    if (!installationId) {
+      throw new Error(`Existing installation has no id: ${stringify(existing)}`);
+    }
+    log('SKIPPING_PREPARE_CONFIRM_INSTALLATION_ALREADY_PRESENT', {
+      skillId: EVENT_SKILL_ID,
+      installationId,
+      status: existing.status,
+    });
+  } else try {
     const prepared = await requestJson<PrepareResponse>('/installations/prepare', {
       method: 'POST',
       body: JSON.stringify(prepareInput),
