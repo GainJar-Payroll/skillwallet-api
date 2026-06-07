@@ -16,6 +16,13 @@ import {
 } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import {
+  findActiveOrPausedInstallation,
+  getSkillParameterDefinitions,
+  listInstallationsForUser,
+  ProofParameterError,
+  validateParametersClientSide,
+} from './proof-helpers';
 
 /**
  * test/proof/proof.ts
@@ -868,21 +875,78 @@ async function main() {
     selectedSkill,
   });
 
-  step('5. POST /installations/prepare');
+  step('4a. Client-side validate chosen parameters against skill.parameters');
 
   const dcaConfig = buildDcaConfig(smartAccountAddress, selectedSkill);
+  const dcaParameters = [
+    { key: 'outputToken', value: 'weth' },
+    { key: 'amountUsdc', value: AMOUNT_IN_USDC_ATOMS },
+  ];
+
+  const skillDefinitions = getSkillParameterDefinitions(selectedSkill);
+  let normalizedParameters: Record<string, unknown>;
+  try {
+    normalizedParameters = validateParametersClientSide(skillDefinitions, dcaParameters);
+  } catch (err) {
+    if (err instanceof ProofParameterError) {
+      throw new Error(
+        `Client-side parameter validation failed for skill=${skillId} key=${err.key ?? '?'}: ${err.message}`,
+      );
+    }
+    throw err;
+  }
+
+  log('CLIENT_SIDE_PARAMETERS_VALIDATED', {
+    skillId,
+    submitted: dcaParameters,
+    normalized: normalizedParameters,
+  });
+
+  step('4b. Check GET /installations for existing (user, smartAccount, skillId)');
+
+  const existingInstallations = await listInstallationsForUser(requestJson, {
+    userAddress: owner,
+    chainId: DEFAULT_CHAIN_ID,
+    smartAccountAddress,
+  });
+
+  const existing = findActiveOrPausedInstallation(existingInstallations, {
+    userAddress: owner,
+    smartAccountAddress,
+    skillId,
+  });
+
+  log('EXISTING_INSTALLATION_CHECK', {
+    skillId,
+    installationsCount: existingInstallations.length,
+    existing: existing ?? null,
+  });
+
+  step('5. POST /installations/prepare');
 
   const prepareInput = {
     userAddress: owner,
     smartAccountAddress,
     chainId: DEFAULT_CHAIN_ID,
     skillId,
-    config: dcaConfig,
+    parameters: dcaParameters,
   };
 
   let installationId = '';
 
-  try {
+  if (existing) {
+    installationId = getInstallationId(existing);
+    if (!installationId) {
+      throw new Error(
+        `Existing installation has no id: ${stringify(existing)}`,
+      );
+    }
+    log('SKIPPING_PREPARE_CONFIRM_INSTALLATION_ALREADY_PRESENT', {
+      skillId,
+      installationId,
+      status: existing.status,
+    });
+  } else try {
     const prepared = await requestJson<PrepareResponse>('/installations/prepare', {
       method: 'POST',
       body: JSON.stringify(prepareInput),
@@ -957,7 +1021,7 @@ async function main() {
       skillId,
       signedDelegation,
       delegationSalt,
-      parameters: dcaConfig,
+      parameters: dcaParameters,
     };
 
     const confirmed = await requestJson<InstallationResponse>('/installations/confirm', {

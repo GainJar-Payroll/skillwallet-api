@@ -53,7 +53,17 @@ describe('SkillEventHandlerService', () => {
       },
       execution: { kind: 'dca-uniswap-v3', defaultFeeTier: 3000 } as never,
       parameters: [
-        { key: 'outputToken', label: 'Output', type: 'select', required: true, options: ['weth', 'cbBtc'], defaultValue: 'weth' },
+        {
+          key: 'outputToken',
+          label: 'Output',
+          type: 'select',
+          required: true,
+          options: [
+            { label: 'WETH', value: 'weth' },
+            { label: 'cbBTC', value: 'cbBtc' },
+          ],
+          defaultValue: 'weth',
+        },
       ] as never,
     });
   }

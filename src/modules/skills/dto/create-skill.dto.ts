@@ -14,6 +14,7 @@ import type {
   SkillRunType,
   SkillTriggerConfig,
 } from '../skill-config.types';
+import type { SkillParameterDefinition } from '../skill-parameter.types';
 
 export class CreateSkillDto {
   @ApiProperty({ description: 'Display name of the skill', example: 'Generic DCA' })
@@ -114,7 +115,7 @@ export class CreateSkillDto {
   })
   @IsOptional()
   @IsArray()
-  parameters?: unknown[];
+  parameters?: SkillParameterDefinition[];
 
   @ApiPropertyOptional({
     description: 'Free-form metadata (category, kind, risk, builtin flag, etc.)',

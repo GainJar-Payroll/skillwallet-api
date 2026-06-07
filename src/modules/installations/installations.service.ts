@@ -13,6 +13,7 @@ import { SkillsService } from '../skills/skills.service';
 import { DelegationService } from '../delegation/delegation.service';
 import { PrepareInstallationDto } from './dto/prepare-installation.dto';
 import { ConfirmInstallationDto } from './dto/confirm-installation.dto';
+import { validateSkillParameters } from '../skills/skill-parameter-validation';
 
 export interface PrepareInstallationResponse {
   delegation: Record<string, unknown>;
@@ -61,6 +62,8 @@ export class InstallationsService {
       skillId: skill.skillId,
     });
 
+    validateSkillParameters(skill.parameters, dto.parameters);
+
     const salt = this.delegationService.generateSalt();
 
     const delegation = (await this.delegationService.prepare(
@@ -93,6 +96,8 @@ export class InstallationsService {
       smartAccountAddress,
       skillId: skill.skillId,
     });
+
+    const validatedParameters = validateSkillParameters(skill.parameters, dto.parameters);
 
     const expected = (await this.delegationService.prepare(
       skill,
@@ -140,7 +145,7 @@ export class InstallationsService {
       signedDelegation: dto.signedDelegation,
       delegationSalt: dto.delegationSalt,
       chainId: skill.chainId,
-      parameters: dto.parameters ?? {},
+      parameters: validatedParameters,
       status: 'active',
     });
 

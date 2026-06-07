@@ -47,7 +47,22 @@ const GENERIC_DCA_TEMPLATE: CreateSkillDto = {
       label: 'Output Token',
       type: 'select',
       required: true,
-      options: ['weth', 'cbBtc'],
+      options: [
+        {
+          label: 'WETH',
+          value: 'weth',
+          metadata: {
+            address: '0x4200000000000000000000000000000000000006',
+            symbol: 'WETH',
+            decimals: 18,
+          },
+        },
+        {
+          label: 'cbBTC',
+          value: 'cbBtc',
+          metadata: { symbol: 'cbBTC', decimals: 8 },
+        },
+      ],
       defaultValue: 'weth',
       description: 'Token to accumulate with each DCA run',
     },
@@ -125,7 +140,22 @@ const USDC_INBOUND_DCA_TEMPLATE: CreateSkillDto = {
       label: 'Output Token',
       type: 'select',
       required: true,
-      options: ['weth', 'cbBtc'],
+      options: [
+        {
+          label: 'WETH',
+          value: 'weth',
+          metadata: {
+            address: '0x4200000000000000000000000000000000000006',
+            symbol: 'WETH',
+            decimals: 18,
+          },
+        },
+        {
+          label: 'cbBTC',
+          value: 'cbBtc',
+          metadata: { symbol: 'cbBTC', decimals: 8 },
+        },
+      ],
       defaultValue: 'weth',
       description: 'Token to accumulate from inbound USDC',
     },
@@ -134,7 +164,10 @@ const USDC_INBOUND_DCA_TEMPLATE: CreateSkillDto = {
       label: 'Spend Mode',
       type: 'select',
       required: true,
-      options: ['fixed', 'percent-of-inbound'],
+      options: [
+        { label: 'Fixed amount', value: 'fixed' },
+        { label: 'Percent of inbound', value: 'percent-of-inbound' },
+      ],
       defaultValue: 'fixed',
       description: 'Spend a fixed amount or percent of inbound transfer amount',
     },

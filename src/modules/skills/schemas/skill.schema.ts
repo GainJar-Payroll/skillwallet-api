@@ -8,16 +8,9 @@ import type {
   SkillRunType,
   SkillTriggerConfig,
 } from '../skill-config.types';
+import type { SkillParameterDefinition } from '../skill-parameter.types';
 
-export class SkillParameter {
-  key!: string;
-  label!: string;
-  type!: 'select' | 'number' | 'boolean';
-  required!: boolean;
-  options?: string[];
-  defaultValue?: unknown;
-  description?: string;
-}
+export type SkillParameter = SkillParameterDefinition;
 
 export class EventTriggerConfig implements EventSkillTriggerConfig {
   type!: 'event-trigger';

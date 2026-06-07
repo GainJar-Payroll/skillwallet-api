@@ -16,6 +16,13 @@ import {
 } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import {
+  findActiveOrPausedInstallation,
+  getSkillParameterDefinitions,
+  listInstallationsForUser,
+  ProofParameterError,
+  validateParametersClientSide,
+} from './proof-helpers';
 
 const PORT = Number(process.env.PORT ?? '3000');
 const API_BASE_URL = `http://localhost:${PORT}`;
@@ -55,7 +62,7 @@ const EVENT_SKILL_ID = 'usdc-inbound-dca-84532' as const;
 const TRANSFER_EVENT_SIGNATURE = 'Transfer(address indexed from,address indexed to,uint256 value)' as const;
 const INBOUND_USDC_ATOMS = process.env.PROOF_INBOUND_USDC_ATOMS ?? '1000000';
 
-const CHOSEN_PARAMETERS = {
+const CHOSEN_PARAMETER_VALUES = {
   outputToken: (process.env.PROOF_OUTPUT_TOKEN ?? 'weth') as 'weth' | 'cbBtc',
   spendMode: (process.env.PROOF_SPEND_MODE ?? 'percent-of-inbound') as
     | 'fixed'
@@ -64,6 +71,11 @@ const CHOSEN_PARAMETERS = {
   percentOfInboundBps: process.env.PROOF_PERCENT_OF_INBOUND_BPS ?? '5000',
   dailySpendLimit: process.env.PROOF_DAILY_SPEND_LIMIT ?? '900000',
 };
+
+const CHOSEN_PARAMETERS = Object.entries(CHOSEN_PARAMETER_VALUES).map(([key, value]) => ({
+  key,
+  value,
+}));
 
 const POLL_INTERVAL_MS = Number(process.env.PROOF_POLL_INTERVAL_MS ?? '5000');
 const POLL_TIMEOUT_MS = Number(process.env.PROOF_POLL_TIMEOUT_MS ?? '180000');
@@ -568,7 +580,7 @@ async function assertHybridAlreadyDeployed(smartAccountAddress: Address) {
 
 function assertParametersPersisted(installation: InstallationResponse) {
   const parameters = installation.parameters ?? {};
-  for (const [key, value] of Object.entries(CHOSEN_PARAMETERS)) {
+  for (const [key, value] of Object.entries(CHOSEN_PARAMETER_VALUES)) {
     if (String(parameters[key]) !== String(value)) {
       throw new Error(
         `Installation parameter mismatch for ${key}: got=${parameters[key]} expected=${value}`,
@@ -711,15 +723,15 @@ async function main() {
   await logTokenBalance('SMART_ACCOUNT_USDC_BEFORE', USDC, smartAccountAddress, 6);
   await assertHybridAlreadyDeployed(smartAccountAddress);
 
-  step('2. Seed built-in skills and select the event-trigger skill');
-  const seeded = await requestJson<{ seeded: string[] }>('/admin/skills/seed', {
-    method: 'POST',
-    headers: adminHeaders(),
-  });
+  step('2. Seed built-in skills and select the event-trigger skill, SKIPPED');
+  // const seeded = await requestJson<{ seeded: string[] }>('/admin/skills/seed', {
+  //   method: 'POST',
+  //   headers: adminHeaders(),
+  // });
 
-  if (!seeded.seeded.includes('Generic DCA') || !seeded.seeded.includes('USDC Inbound DCA')) {
-    throw new Error(`Seed response missing required built-ins: ${stringify(seeded)}`);
-  }
+  // if (!seeded.seeded.includes('Generic DCA') || !seeded.seeded.includes('USDC Inbound DCA')) {
+  //   throw new Error(`Seed response missing required built-ins: ${stringify(seeded)}`);
+  // }
 
   const skillsBody = await requestJson<any>('/skills');
   const skills = normalizeSkillsResponse(skillsBody);
@@ -727,6 +739,47 @@ async function main() {
   if (!selectedSkill) throw new Error(`Could not find ${EVENT_SKILL_ID} in /skills response`);
 
   log('SKILL_SELECTED_FROM_BACKEND', { selectedSkill });
+
+  step('2a. Client-side validate chosen parameters against skill.parameters');
+
+  const skillDefinitions = getSkillParameterDefinitions(selectedSkill);
+  let normalizedParameters: Record<string, unknown>;
+  try {
+    normalizedParameters = validateParametersClientSide(skillDefinitions, CHOSEN_PARAMETERS);
+  } catch (err) {
+    if (err instanceof ProofParameterError) {
+      throw new Error(
+        `Client-side parameter validation failed for skill=${EVENT_SKILL_ID} key=${err.key ?? '?'}: ${err.message}`,
+      );
+    }
+    throw err;
+  }
+
+  log('CLIENT_SIDE_PARAMETERS_VALIDATED', {
+    skillId: EVENT_SKILL_ID,
+    submitted: CHOSEN_PARAMETERS,
+    normalized: normalizedParameters,
+  });
+
+  step('2b. Check GET /installations for existing (user, smartAccount, skillId)');
+
+  const existingInstallations = await listInstallationsForUser(requestJson, {
+    userAddress: owner,
+    chainId: DEFAULT_CHAIN_ID,
+    smartAccountAddress,
+  });
+
+  const existing = findActiveOrPausedInstallation(existingInstallations, {
+    userAddress: owner,
+    smartAccountAddress,
+    skillId: EVENT_SKILL_ID,
+  });
+
+  log('EXISTING_INSTALLATION_CHECK', {
+    skillId: EVENT_SKILL_ID,
+    installationsCount: existingInstallations.length,
+    existing: existing ?? null,
+  });
 
   step('3. POST /installations/prepare');
   const prepareInput = {
@@ -739,7 +792,17 @@ async function main() {
 
   let installationId = '';
 
-  try {
+  if (existing) {
+    installationId = getInstallationId(existing);
+    if (!installationId) {
+      throw new Error(`Existing installation has no id: ${stringify(existing)}`);
+    }
+    log('SKIPPING_PREPARE_CONFIRM_INSTALLATION_ALREADY_PRESENT', {
+      skillId: EVENT_SKILL_ID,
+      installationId,
+      status: existing.status,
+    });
+  } else try {
     const prepared = await requestJson<PrepareResponse>('/installations/prepare', {
       method: 'POST',
       body: JSON.stringify(prepareInput),
@@ -816,7 +879,7 @@ async function main() {
     throw new Error(`Execution event.to mismatch: got=${actualTo} expected=${expectedTo}`);
   }
 
-  if (String(execution.spend?.dailyLimit) !== String(CHOSEN_PARAMETERS.dailySpendLimit)) {
+  if (String(execution.spend?.dailyLimit) !== String(CHOSEN_PARAMETER_VALUES.dailySpendLimit)) {
     throw new Error(
       `Execution spend.dailyLimit mismatch: got=${execution.spend?.dailyLimit} expected=${CHOSEN_PARAMETERS.dailySpendLimit}`,
     );

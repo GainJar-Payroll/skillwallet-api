@@ -34,7 +34,25 @@ export function buildSkill(overrides: Partial<Skill> = {}): Skill {
     delegationScope: DCA_DAILY_SCOPE as never,
     parameters: [
       { key: 'amountUsdc', label: 'Amount', type: 'number', required: true, defaultValue: '10000000' },
-      { key: 'outputToken', label: 'Output', type: 'select', required: true, options: ['weth', 'cbBtc'], defaultValue: 'weth' },
+      {
+        key: 'outputToken',
+        label: 'Output',
+        type: 'select',
+        required: true,
+        options: [
+          {
+            label: 'WETH',
+            value: 'weth',
+            metadata: {
+              address: '0x4200000000000000000000000000000000000006',
+              symbol: 'WETH',
+              decimals: 18,
+            },
+          },
+          { label: 'cbBTC', value: 'cbBtc', metadata: { symbol: 'cbBTC', decimals: 8 } },
+        ],
+        defaultValue: 'weth',
+      },
     ],
     isActive: true,
     metadata: {},
