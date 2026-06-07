@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { getAddress } from 'viem';
 import type { Skill } from '../src/modules/skills/schemas/skill.schema';
 import type { Installation } from '../src/modules/installations/schemas/installation.schema';
 
@@ -21,10 +22,14 @@ export const DCA_DAILY_SCOPE = {
 export function buildSkill(overrides: Partial<Skill> = {}): Skill {
   return {
     name: 'DCA Daily',
+    skillId: 'generic-dca-84532',
     description: 'Daily DCA',
     iconUrl: 'https://example.com/icon.png',
     runType: 'cron',
     cronExpression: '0 0 * * *',
+    trigger: undefined,
+    execution: undefined,
+    limits: undefined,
     chainId: 84532,
     delegationScope: DCA_DAILY_SCOPE as never,
     parameters: [
@@ -40,7 +45,7 @@ export function buildSkill(overrides: Partial<Skill> = {}): Skill {
 export function buildInstallation(overrides: Partial<Installation> = {}): Installation {
   return {
     userAddress: TEST_USER,
-    skillId: new Types.ObjectId(),
+    skillId: 'generic-dca-84532',
     signedDelegation: {
       delegate: TEST_EXECUTOR,
       delegator: TEST_SMART_ACCOUNT,
@@ -77,6 +82,13 @@ export function buildMockSkillModel() {
       }),
       lean: () => ({ exec: jest.fn().mockResolvedValue(Object.values(data)) }),
     }),
+    findOne: jest.fn().mockImplementation((filter: { skillId?: string }) => ({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue(
+          Object.values(data).find((d) => d.skillId === filter.skillId) ?? null,
+        ),
+      }),
+    })),
     findById: jest.fn().mockImplementation((id: string) => ({
       lean: () => ({
         exec: jest.fn().mockResolvedValue(
@@ -141,22 +153,70 @@ export function buildMockInstallationModel() {
   });
 
   return {
-    find: jest.fn().mockReturnValue({
-      populate: () => ({
-        lean: () => ({
-          exec: jest.fn().mockImplementation(async (filterArg?: { userAddress?: string }) => {
-            const all = Object.values(data);
-            if (filterArg?.userAddress) {
-              return all.filter((i) => i.userAddress === filterArg.userAddress);
+    find: jest.fn().mockImplementation(
+      (filterArg?: {
+        userAddress?: string;
+        smartAccountAddress?: string;
+        chainId?: number;
+        skillId?: string | { $in?: string[] };
+        status?: string | { $in?: string[] };
+      }) => {
+        const applyFilter = () => {
+          const all = Object.values(data);
+
+          return all.filter((i) => {
+            if (
+              filterArg?.userAddress &&
+              i.userAddress.toLowerCase() !== filterArg.userAddress.toLowerCase()
+            ) {
+              return false;
             }
-            return all;
+            if (
+              filterArg?.smartAccountAddress &&
+              i.smartAccountAddress.toLowerCase() !== filterArg.smartAccountAddress.toLowerCase()
+            ) {
+              return false;
+            }
+            if (filterArg?.chainId !== undefined && i.chainId !== filterArg.chainId) return false;
+            if (typeof filterArg?.skillId === 'string' && i.skillId !== filterArg.skillId) return false;
+            if (
+              typeof filterArg?.skillId === 'object' &&
+              filterArg.skillId?.$in &&
+              !filterArg.skillId.$in.includes(i.skillId)
+            ) {
+              return false;
+            }
+            if (typeof filterArg?.status === 'string' && i.status !== filterArg.status) return false;
+            if (
+              typeof filterArg?.status === 'object' &&
+              filterArg.status?.$in &&
+              !filterArg.status.$in.includes(i.status)
+            ) {
+              return false;
+            }
+            return true;
+          });
+        };
+
+        const chain = {
+          populate: () => ({
+            lean: () => ({
+              exec: jest.fn().mockImplementation(async () => applyFilter()),
+            }),
           }),
-        }),
-      }),
-      lean: () => ({
-        exec: jest.fn().mockResolvedValue(Object.values(data)),
-      }),
-    }),
+          sort: () => ({
+            lean: () => ({
+              exec: jest.fn().mockImplementation(async () => applyFilter()),
+            }),
+          }),
+          lean: () => ({
+            exec: jest.fn().mockImplementation(async () => applyFilter()),
+          }),
+        };
+
+        return chain;
+      },
+    ),
     findById: jest.fn().mockImplementation((id: string | Types.ObjectId) => {
       const idStr = String(id);
       const found = Object.values(data).find((i) => String(i._id) === idStr);
@@ -174,7 +234,7 @@ export function buildMockInstallationModel() {
       data[String(created._id)] = created;
       return wrap(created);
     }),
-    findOne: jest.fn().mockImplementation((filter: { userAddress?: string; smartAccountAddress?: string; skillId?: Types.ObjectId; status?: { $in?: string[] } }) => ({
+    findOne: jest.fn().mockImplementation((filter: { userAddress?: string; smartAccountAddress?: string; skillId?: string; status?: { $in?: string[] } }) => ({
       lean: () => ({
         exec: jest.fn().mockImplementation(async () => {
           return Object.values(data).find((i) => {
@@ -213,3 +273,4 @@ export function buildMockExecutorService() {
 }
 
 export const TEST_SMART_ACCOUNT = '0x0000000000000000000000000000000000000abc' as `0x${string}`;
+export const TEST_SMART_ACCOUNT_CHECKSUM = getAddress(TEST_SMART_ACCOUNT) as `0x${string}`;

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { encodeFunctionData, erc20Abi, getAddress } from 'viem';
 import { getChainConfig, ChainConfig } from '../../config/chains.config';
@@ -8,10 +9,22 @@ import { InstallationsService } from '../installations/installations.service';
 import { OneShotExecution, OneShotService, OneShotStatus } from '../oneshot/oneshot.service';
 import { X402Service } from '../x402/x402.service';
 import { VeniceService } from '../venice/venice.service';
-import { ExecutionRecord, Installation } from '../installations/schemas/installation.schema';
+import {
+  ExecutionRecord,
+  ExecutionSpendRecord,
+  ExecutionTriggerRecord,
+  Installation,
+} from '../installations/schemas/installation.schema';
 import { GM_ABI, SWAP_ROUTER_02_ABI } from './abis';
+import { detectDcaExecution, normalizeSkillExecution } from '../skills/skill-config.util';
+import { SpendReservationsService } from '../spend-reservations/spend-reservations.service';
 
 const FEE_AMOUNT_ATOMS = 10_000n;
+
+export interface ExecuteInstallationContext {
+  trigger?: ExecutionTriggerRecord;
+  spend?: ExecutionSpendRecord & { skippedReason?: string };
+}
 
 @Injectable()
 export class RunnerService {
@@ -24,9 +37,13 @@ export class RunnerService {
     private readonly oneShotService: OneShotService,
     private readonly x402Service: X402Service,
     private readonly veniceService: VeniceService,
+    private readonly spendReservationsService: SpendReservationsService,
   ) {}
 
-  async executeInstallation(installationId: string): Promise<void> {
+  async executeInstallation(
+    installationId: string,
+    context: ExecuteInstallationContext = {},
+  ): Promise<void> {
     const installation = await this.installationsService.findById(installationId);
 
     if (installation.status !== 'active') return;
@@ -34,8 +51,8 @@ export class RunnerService {
     const skillId =
       typeof installation.skillId === 'object' &&
       installation.skillId !== null &&
-      '_id' in installation.skillId
-        ? String((installation.skillId as { _id: unknown })._id)
+      'skillId' in installation.skillId
+        ? String((installation.skillId as { skillId: unknown }).skillId)
         : String(installation.skillId);
 
     const skill = await this.skillsService.findById(skillId);
@@ -44,9 +61,14 @@ export class RunnerService {
     let executions: OneShotExecution[];
     let aiContext: string | undefined;
     let newsContext: string | undefined;
+    const execution = normalizeSkillExecution(skill);
 
-    if (this.isDcaSkill(skill)) {
-      const result = await this.buildDcaExecutions(installation, chainConfig);
+    if (execution?.kind === 'dca-uniswap-v3' || detectDcaExecution(skill)) {
+      const result = await this.buildDcaExecutions(installation, chainConfig, {
+        amountIn: context.spend?.actualAmount,
+        feeTier:
+          typeof execution?.defaultFeeTier === 'number' ? Number(execution.defaultFeeTier) : undefined,
+      });
       executions = result.executions;
       aiContext = result.aiContext;
       newsContext = result.newsContext;
@@ -73,8 +95,11 @@ export class RunnerService {
     const allExecutions = [feeTransfer, ...executions];
 
     const record: ExecutionRecord = {
+      executionId: randomUUID(),
       executedAt: new Date(),
       status: 'pending',
+      trigger: context.trigger,
+      spend: context.spend,
       aiContext,
       newsContext,
     };
@@ -98,7 +123,12 @@ export class RunnerService {
       taskId = await this.oneShotService.send7710Transaction(sendParams);
     } catch (err) {
       record.status = 'failed';
+      record.completedAt = new Date();
       record.errorMessage = (err as Error).message;
+
+      if (context.spend?.reservationId) {
+        await this.spendReservationsService.releaseReservation(context.spend.reservationId);
+      }
 
       await this.installationsService.appendExecution(installationId, record);
 
@@ -112,7 +142,12 @@ export class RunnerService {
 
     await this.installationsService.appendExecution(installationId, record);
 
-    void this.pollAndRecord(installationId, taskId).catch((err) => {
+    void this.pollAndRecord(
+      installationId,
+      record.executionId!,
+      taskId,
+      context.spend?.reservationId,
+    ).catch((err) => {
       this.logger.error(`1Shot polling failed for ${installationId}: ${(err as Error).message}`);
     });
   }
@@ -132,6 +167,7 @@ export class RunnerService {
   async buildDcaExecutions(
     installation: Installation,
     chainConfig: ChainConfig,
+    options: { amountIn?: string; feeTier?: number } = {},
   ): Promise<{
     executions: OneShotExecution[];
     aiContext?: string;
@@ -161,7 +197,7 @@ export class RunnerService {
     const parameters = installation.parameters ?? {};
 
     const amountUsdc = BigInt(
-      String(parameters['amountPerRun'] ?? parameters['amountUsdc'] ?? '10000000'),
+      String(options.amountIn ?? parameters['amountPerRun'] ?? parameters['amountUsdc'] ?? '10000000'),
     );
 
     const tokenOutFromConfig = (parameters['tokenOut'] as { address?: string } | undefined)
@@ -175,7 +211,7 @@ export class RunnerService {
         ? chainConfig.tokens.cbBtc
         : chainConfig.tokens.weth;
 
-    const feeTier = Number(parameters['feeTier'] ?? 500);
+    const feeTier = Number(options.feeTier ?? parameters['feeTier'] ?? 500);
 
     const recipient = getAddress(
       String(parameters['recipient'] ?? installation.smartAccountAddress),
@@ -240,24 +276,37 @@ export class RunnerService {
     ];
   }
 
-  private isDcaSkill(skill: Skill): boolean {
-    return (
-      skill.name === 'DCA Daily' || skill.name === 'Generic DCA' || skill.metadata?.kind === 'dca'
-    );
-  }
-
-  private async pollAndRecord(installationId: string, taskId: `0x${string}`): Promise<void> {
+  private async pollAndRecord(
+    installationId: string,
+    executionId: string,
+    taskId: `0x${string}`,
+    reservationId?: string,
+  ): Promise<void> {
     try {
       const finalStatus: OneShotStatus = await this.oneShotService.poll(taskId);
 
-      await this.installationsService.updateLastExecution(installationId, {
+      if (reservationId) {
+        if (finalStatus.status === 200) {
+          await this.spendReservationsService.confirmReservation(reservationId);
+        } else {
+          await this.spendReservationsService.releaseReservation(reservationId);
+        }
+      }
+
+      await this.installationsService.updateExecution(installationId, executionId, {
         status: finalStatus.status === 200 ? 'confirmed' : 'failed',
+        completedAt: new Date(),
         txHash: finalStatus.hash,
         errorMessage: finalStatus.status !== 200 ? finalStatus.message : undefined,
       });
     } catch (err) {
-      await this.installationsService.updateLastExecution(installationId, {
+      if (reservationId) {
+        await this.spendReservationsService.releaseReservation(reservationId);
+      }
+
+      await this.installationsService.updateExecution(installationId, executionId, {
         status: 'failed',
+        completedAt: new Date(),
         errorMessage: (err as Error).message,
       });
 

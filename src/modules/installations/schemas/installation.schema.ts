@@ -1,14 +1,45 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document } from 'mongoose';
 
 export class ExecutionRecord {
+  executionId?: string;
   executedAt!: Date;
-  status!: 'pending' | 'submitted' | 'confirmed' | 'failed';
+  completedAt?: Date;
+  status!: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'skipped';
+  trigger?: ExecutionTriggerRecord;
+  spend?: ExecutionSpendRecord;
   oneShotTaskId?: string;
   txHash?: string;
   errorMessage?: string;
+  skippedReason?: string;
   aiContext?: string;
   newsContext?: string;
+}
+
+export type ExecutionTriggerType = 'cron' | 'event-trigger';
+
+export class ExecutionTriggerEventRecord {
+  chainId!: number;
+  contractAddress!: string;
+  eventSignature!: string;
+  txHash?: string;
+  logIndex?: number;
+  blockNumber?: string;
+  args?: Record<string, unknown>;
+}
+
+export class ExecutionTriggerRecord {
+  type!: ExecutionTriggerType;
+  event?: ExecutionTriggerEventRecord;
+}
+
+export class ExecutionSpendRecord {
+  tokenAddress!: string;
+  requestedAmount!: string;
+  actualAmount!: string;
+  dailyLimit?: string;
+  periodKey?: string;
+  reservationId?: string;
 }
 
 export type InstallationDocument = Installation & Document;
@@ -21,8 +52,8 @@ export class Installation {
   @Prop({ required: true, index: true })
   smartAccountAddress!: string;
 
-  @Prop({ required: true, type: Types.ObjectId, ref: 'Skill', index: true })
-  skillId!: Types.ObjectId;
+  @Prop({ required: true, type: String, index: true })
+  skillId!: string;
 
   @Prop({ required: true, type: Object })
   signedDelegation!: Record<string, unknown>;

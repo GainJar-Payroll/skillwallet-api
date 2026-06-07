@@ -6,7 +6,12 @@ import { Connection } from 'mongoose';
 import request from 'supertest';
 import { SkillsModule } from '../src/modules/skills/skills.module';
 import { Skill, SkillSchema } from '../src/modules/skills/schemas/skill.schema';
+import {
+  Installation,
+  InstallationSchema,
+} from '../src/modules/installations/schemas/installation.schema';
 import configuration from '../src/config/configuration';
+import { TEST_SMART_ACCOUNT, TEST_SMART_ACCOUNT_CHECKSUM, TEST_USER } from './helpers';
 
 describe('Skills e2e', () => {
   let app: INestApplication;
@@ -18,7 +23,10 @@ describe('Skills e2e', () => {
       imports: [
         ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
         MongooseModule.forRoot(process.env.MONGO_URI!),
-        MongooseModule.forFeature([{ name: Skill.name, schema: SkillSchema }]),
+        MongooseModule.forFeature([
+          { name: Skill.name, schema: SkillSchema },
+          { name: Installation.name, schema: InstallationSchema },
+        ]),
         SkillsModule,
       ],
     }).compile();
@@ -41,6 +49,7 @@ describe('Skills e2e', () => {
   beforeEach(async () => {
     try {
       await conn.collection('skills').deleteMany({});
+      await conn.collection('installations').deleteMany({});
     } catch {}
   });
 
@@ -49,6 +58,7 @@ describe('Skills e2e', () => {
   it('POST /skills creates a cron skill', async () => {
     const dto = {
       name: 'DCA Daily',
+      skillId: 'dca-daily-84532',
       description: 'Daily DCA into WETH',
       iconUrl: 'https://example.com/icon.png',
       runType: 'cron',
@@ -83,6 +93,7 @@ describe('Skills e2e', () => {
       .set(apiKey)
       .send({
         name: 'S',
+        skillId: 'skill-s-84532',
         description: 'S',
         iconUrl: 'S',
         runType: 'cron',
@@ -93,6 +104,74 @@ describe('Skills e2e', () => {
       .expect(201);
     const res = await request(app.getHttpServer()).get('/skills').expect(200);
     expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  it('GET /skills includes installation summary for active installs only', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/skills')
+      .set(apiKey)
+      .send({
+        name: 'Installed Skill',
+        skillId: 'installed-skill-84532',
+        description: 'Installed skill',
+        iconUrl: 'I',
+        runType: 'cron',
+        cronExpression: '*/5 * * * *',
+        chainId: 84532,
+        delegationScope: { type: 'X' },
+      })
+      .expect(201);
+
+    await conn.collection('installations').insertMany([
+      {
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT_CHECKSUM,
+        skillId: created.body.skillId,
+        signedDelegation: {
+          delegate: TEST_SMART_ACCOUNT,
+          delegator: TEST_SMART_ACCOUNT,
+          salt: '0x' + '11'.repeat(32),
+          signature: '0x' + '22'.repeat(65),
+        },
+        delegationSalt: '0x' + '11'.repeat(32),
+        chainId: 84532,
+        parameters: {},
+        status: 'active',
+        createdAt: new Date('2026-06-06T00:00:00.000Z'),
+        updatedAt: new Date('2026-06-06T00:00:00.000Z'),
+      },
+      {
+        userAddress: TEST_USER,
+        smartAccountAddress: TEST_SMART_ACCOUNT_CHECKSUM,
+        skillId: created.body.skillId,
+        signedDelegation: {
+          delegate: TEST_SMART_ACCOUNT,
+          delegator: TEST_SMART_ACCOUNT,
+          salt: '0x' + '33'.repeat(32),
+          signature: '0x' + '44'.repeat(65),
+        },
+        delegationSalt: '0x' + '33'.repeat(32),
+        chainId: 84532,
+        parameters: {},
+        status: 'revoked',
+        createdAt: new Date('2026-06-05T00:00:00.000Z'),
+        updatedAt: new Date('2026-06-05T00:00:00.000Z'),
+      },
+    ]);
+
+    const res = await request(app.getHttpServer())
+      .get(`/skills?userAddress=${TEST_USER}&smartAccountAddress=${TEST_SMART_ACCOUNT_CHECKSUM}`)
+      .expect(200);
+
+    const installedSkill = res.body.data.find(
+      (entry: { skillId: string }) => entry.skillId === created.body.skillId,
+    );
+
+    expect(installedSkill.installation).toEqual(
+      expect.objectContaining({
+        status: 'active',
+      }),
+    );
   });
 
   it('GET /skills/:id returns 404 for unknown id', async () => {
@@ -107,6 +186,7 @@ describe('Skills e2e', () => {
       .set(apiKey)
       .send({
         name: 'A',
+        skillId: 'skill-a-84532',
         description: 'A',
         iconUrl: 'A',
         runType: 'cron',
@@ -129,6 +209,7 @@ describe('Skills e2e', () => {
       .set(apiKey)
       .send({
         name: 'B',
+        skillId: 'skill-b-84532',
         description: 'B',
         iconUrl: 'B',
         runType: 'cron',

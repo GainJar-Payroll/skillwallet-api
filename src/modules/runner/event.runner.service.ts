@@ -5,13 +5,12 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AbiEvent, parseAbiItem } from 'viem';
 import { ExecutorService } from '../executor/executor.service';
-import { SkillsService } from '../skills/skills.service';
-import { InstallationsService } from '../installations/installations.service';
-import { RunnerService } from './runner.service';
-import { Installation } from '../installations/schemas/installation.schema';
+import { normalizeSkillTrigger } from '../skills/skill-config.util';
 import { Skill } from '../skills/schemas/skill.schema';
+import { SkillsService } from '../skills/skills.service';
+import { parseTriggerEventAbi } from './event-abi';
+import { SkillEventHandlerService } from './skill-event-handler.service';
 
 type WithId<T> = T & { _id: { toString(): string } };
 
@@ -24,8 +23,7 @@ export class EventRunnerService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly executorService: ExecutorService,
     private readonly skillsService: SkillsService,
-    private readonly installationsService: InstallationsService,
-    private readonly runnerService: RunnerService,
+    private readonly skillEventHandlerService: SkillEventHandlerService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -46,40 +44,90 @@ export class EventRunnerService implements OnModuleInit, OnModuleDestroy {
 
   private async startWatchers(): Promise<void> {
     const skills = (await this.skillsService.findAll(true)) as Array<WithId<Skill>>;
-    const eventSkills = skills.filter((s) => s.runType === 'event-trigger');
+    const eventSkills = skills.filter((skill) => normalizeSkillTrigger(skill)?.type === 'event-trigger');
+    const groupedWatchers = new Map<string, Array<WithId<Skill>>>();
 
     for (const skill of eventSkills) {
-      const cfg = skill.eventTriggerConfig;
-      if (!cfg?.contractAddress || !cfg.eventSignature) continue;
+      const trigger = normalizeSkillTrigger(skill);
+      if (!trigger || trigger.type !== 'event-trigger') continue;
+
+      const key = `${trigger.chainId ?? skill.chainId}:${trigger.contractAddress.toLowerCase()}:${trigger.eventSignature}`;
+      groupedWatchers.set(key, [...(groupedWatchers.get(key) ?? []), skill]);
+    }
+
+    for (const groupedSkills of groupedWatchers.values()) {
+      const firstSkill = groupedSkills[0];
+      const trigger = normalizeSkillTrigger(firstSkill);
+      if (!trigger || trigger.type !== 'event-trigger') continue;
 
       try {
-        const publicClient = this.executorService.getPublicClient(skill.chainId);
+        const publicClient = this.executorService.getPublicClient(trigger.chainId ?? firstSkill.chainId);
         const unwatch = publicClient.watchEvent({
-          address: cfg.contractAddress as `0x${string}`,
-          event: parseAbiItem(cfg.eventSignature) as AbiEvent,
-          onLogs: async () => {
-            this.logger.log(`Event trigger fired for skill ${skill.name}`);
-            const installations = (await this.installationsService.findActiveBySkillId(
-              skill._id.toString(),
-            )) as Array<WithId<Installation>>;
-            for (const inst of installations) {
-              try {
-                await this.runnerService.executeInstallation(inst._id.toString());
-              } catch (err) {
-                this.logger.error(
-                  `Event-triggered execution failed: ${(err as Error).message}`,
-                );
+          address: trigger.contractAddress as `0x${string}`,
+          event: parseTriggerEventAbi(trigger.eventSignature),
+          onLogs: async (logs: Array<Record<string, unknown>>) => {
+            for (const log of logs) {
+              const args = this.serializeArgs(log.args);
+
+              for (const skill of groupedSkills) {
+                try {
+                  await this.skillEventHandlerService.handleSkillEvent({
+                    skillId: skill.skillId,
+                    chainId: trigger.chainId ?? skill.chainId,
+                    triggerType: 'event-trigger',
+                    event: {
+                      chainId: trigger.chainId ?? skill.chainId,
+                      contractAddress: trigger.contractAddress,
+                      eventSignature: trigger.eventSignature,
+                      txHash:
+                        typeof log.transactionHash === 'string' ? log.transactionHash : undefined,
+                      logIndex:
+                        typeof log.logIndex === 'number'
+                          ? log.logIndex
+                          : log.logIndex !== undefined
+                            ? Number(log.logIndex)
+                            : undefined,
+                      blockNumber:
+                        typeof log.blockNumber === 'bigint'
+                          ? log.blockNumber.toString()
+                          : log.blockNumber !== undefined
+                            ? String(log.blockNumber)
+                            : undefined,
+                      args,
+                    },
+                  });
+                } catch (err) {
+                  this.logger.error(
+                    `Event-triggered execution failed for ${skill.name}: ${(err as Error).message}`,
+                  );
+                }
               }
             }
           },
         });
+
         this.unwatchFns.push(unwatch);
-        this.logger.log(`Watching events for skill: ${skill.name}`);
+        this.logger.log(
+          `Watching events for ${groupedSkills.length} skill(s): ${groupedSkills.map((skill) => skill.name).join(', ')}`,
+        );
       } catch (err) {
         this.logger.error(
-          `Failed to start watcher for ${skill.name}: ${(err as Error).message}`,
+          `Failed to start watcher for ${groupedSkills.map((skill) => skill.name).join(', ')}: ${(err as Error).message}`,
         );
       }
     }
+  }
+
+  private serializeArgs(args: unknown): Record<string, unknown> {
+    if (typeof args !== 'object' || args === null) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(args as Record<string, unknown>).map(([key, value]) => [
+        key,
+        typeof value === 'bigint' ? value.toString() : value,
+      ]),
+    );
   }
 }

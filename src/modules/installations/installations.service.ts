@@ -3,11 +3,10 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, PopulateOptions, Types } from 'mongoose';
 import { getAddress } from 'viem';
 import { Installation, InstallationDocument, ExecutionRecord } from './schemas/installation.schema';
 import { SkillsService } from '../skills/skills.service';
@@ -23,9 +22,21 @@ export interface PrepareInstallationResponse {
   chainId: number;
 }
 
+export interface FindInstallationsOptions {
+  chainId?: number;
+  smartAccountAddress?: string;
+}
+
 @Injectable()
 export class InstallationsService {
-  private readonly logger = new Logger(InstallationsService.name);
+  private readonly skillPopulate: PopulateOptions = {
+    path: 'skillId',
+    model: 'Skill',
+    localField: 'skillId',
+    foreignField: 'skillId',
+    justOne: true,
+    select: 'skillId name iconUrl runType chainId',
+  };
 
   constructor(
     @InjectModel(Installation.name)
@@ -47,7 +58,7 @@ export class InstallationsService {
     await this.assertNoActiveDuplicate({
       userAddress,
       smartAccountAddress,
-      skillId: dto.skillId,
+      skillId: skill.skillId,
     });
 
     const salt = this.delegationService.generateSalt();
@@ -61,7 +72,7 @@ export class InstallationsService {
     return {
       delegation,
       salt,
-      skillId: dto.skillId,
+      skillId: skill.skillId,
       executorAddress: delegation.delegate as `0x${string}`,
       chainId: skill.chainId,
     };
@@ -80,7 +91,7 @@ export class InstallationsService {
     await this.assertNoActiveDuplicate({
       userAddress,
       smartAccountAddress,
-      skillId: dto.skillId,
+      skillId: skill.skillId,
     });
 
     const expected = (await this.delegationService.prepare(
@@ -125,7 +136,7 @@ export class InstallationsService {
     const created = await this.installationModel.create({
       userAddress,
       smartAccountAddress,
-      skillId: new Types.ObjectId(dto.skillId),
+      skillId: skill.skillId,
       signedDelegation: dto.signedDelegation,
       delegationSalt: dto.delegationSalt,
       chainId: skill.chainId,
@@ -136,15 +147,32 @@ export class InstallationsService {
     return created.toObject();
   }
 
-  async findByUser(userAddress: string): Promise<Installation[]> {
+  async findByUser(userAddress: string, options: FindInstallationsOptions = {}): Promise<Installation[]> {
     const checksummed = getAddress(userAddress);
 
+    if (options.chainId !== undefined && !Number.isInteger(options.chainId)) {
+      throw new BadRequestException('chainId must be an integer');
+    }
+
+    const filter: {
+      userAddress: string;
+      chainId?: number;
+      smartAccountAddress?: string;
+    } = {
+      userAddress: checksummed,
+    };
+
+    if (options.chainId !== undefined) {
+      filter.chainId = options.chainId;
+    }
+
+    if (options.smartAccountAddress) {
+      filter.smartAccountAddress = getAddress(options.smartAccountAddress);
+    }
+
     return this.installationModel
-      .find({ userAddress: checksummed })
-      .populate({
-        path: 'skillId',
-        select: 'name iconUrl runType chainId',
-      })
+      .find(filter)
+      .populate(this.skillPopulate)
       .lean()
       .exec();
   }
@@ -152,7 +180,7 @@ export class InstallationsService {
   async findById(id: string): Promise<Installation> {
     const inst = await this.installationModel
       .findById(id)
-      .populate({ path: 'skillId', select: 'name iconUrl runType chainId' })
+      .populate(this.skillPopulate)
       .lean()
       .exec();
 
@@ -194,12 +222,40 @@ export class InstallationsService {
     await doc.save();
   }
 
+  async findExecutions(id: string): Promise<ExecutionRecord[]> {
+    const doc = await this.installationModel.findById(id).lean().exec();
+
+    if (!doc) throw new NotFoundException('Installation not found');
+
+    return doc.executions ?? [];
+  }
+
   async updateLastExecution(id: string, patch: Partial<ExecutionRecord>): Promise<void> {
     const doc = await this.installationModel.findById(id).exec();
 
     if (!doc) return;
 
     const target = doc.executions[0];
+
+    if (!target) return;
+
+    Object.assign(target, patch);
+
+    doc.markModified('executions');
+
+    await doc.save();
+  }
+
+  async updateExecution(
+    id: string,
+    executionId: string,
+    patch: Partial<ExecutionRecord>,
+  ): Promise<void> {
+    const doc = await this.installationModel.findById(id).exec();
+
+    if (!doc) return;
+
+    const target = doc.executions.find((execution) => execution.executionId === executionId);
 
     if (!target) return;
 
@@ -228,16 +284,13 @@ export class InstallationsService {
           { nextExecutionAt: null },
         ],
       })
-      .populate({ path: 'skillId', select: 'name iconUrl runType chainId' })
+      .populate(this.skillPopulate)
       .lean()
       .exec();
   }
 
   async findActiveBySkillId(skillId: string): Promise<Installation[]> {
-    return this.installationModel
-      .find({ status: 'active', skillId: new Types.ObjectId(skillId) })
-      .lean()
-      .exec();
+    return this.installationModel.find({ status: 'active', skillId }).lean().exec();
   }
 
   private async assertNoActiveDuplicate(input: {
@@ -249,7 +302,7 @@ export class InstallationsService {
       .findOne({
         userAddress: input.userAddress,
         smartAccountAddress: input.smartAccountAddress,
-        skillId: new Types.ObjectId(input.skillId),
+        skillId: input.skillId,
         status: { $in: ['active', 'paused'] },
       })
       .lean()

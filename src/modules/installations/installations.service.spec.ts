@@ -49,9 +49,10 @@ describe('InstallationsService', () => {
 
   describe('prepareInstallation', () => {
     it('returns delegation + salt + executor', async () => {
-      skillsService.findById.mockResolvedValue(buildSkill());
+      const skill = buildSkill();
+      skillsService.findById.mockResolvedValue(skill);
       const out = await service.prepareInstallation({
-        skillId: String(new Types.ObjectId()),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
       } as never);
@@ -70,9 +71,10 @@ describe('InstallationsService', () => {
 
   describe('confirmInstallation', () => {
     it('creates installation when valid', async () => {
-      skillsService.findById.mockResolvedValue(buildSkill());
+      const skill = buildSkill();
+      skillsService.findById.mockResolvedValue(skill);
       const out = await service.confirmInstallation({
-        skillId: String(new Types.ObjectId()),
+        skillId: skill.skillId,
         userAddress: TEST_USER,
         smartAccountAddress: TEST_SMART_ACCOUNT,
         delegationSalt: '0x' + '11'.repeat(32),
@@ -87,13 +89,14 @@ describe('InstallationsService', () => {
     });
 
     it('rejects when signature invalid', async () => {
-      skillsService.findById.mockResolvedValue(buildSkill());
+      const skill = buildSkill();
+      skillsService.findById.mockResolvedValue(skill);
       delegationService.validateDelegationShape.mockImplementation(() => {
         throw new Error('bad sig');
       });
       await expect(
         service.confirmInstallation({
-          skillId: String(new Types.ObjectId()),
+          skillId: skill.skillId,
           userAddress: TEST_USER,
           smartAccountAddress: TEST_SMART_ACCOUNT,
           delegationSalt: '0x' + '11'.repeat(32),
@@ -167,7 +170,7 @@ describe('InstallationsService', () => {
   describe('findActiveBySkillId', () => {
     it('returns list for skillId', async () => {
       instModel.__seed(buildInstallation());
-      const list = await service.findActiveBySkillId(String(new Types.ObjectId()));
+      const list = await service.findActiveBySkillId('generic-dca-84532');
       expect(Array.isArray(list)).toBe(true);
     });
   });

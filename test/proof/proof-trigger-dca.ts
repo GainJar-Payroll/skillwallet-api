@@ -17,43 +17,6 @@ import {
 import { baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 
-/**
- * test/proof/proof.ts
- *
- * No Pimlico version.
- *
- * This proof assumes the Hybrid Smart Account is already deployed.
- * Deployment is not done here because Hybrid SA deploy is ERC-4337 UserOperation flow.
- *
- * 1Shot is used by backend runtime when:
- *   POST /admin/installations/:id/trigger
- *
- * Current backend flow:
- *   GET  /admin/executor                         x-api-key required
- *   GET  /skills
- *   POST /installations/prepare
- *   POST /installations/confirm
- *   POST /admin/installations/:id/trigger        x-api-key required
- *   GET  /installations/:id
- *
- * Required env:
- *   PORT
- *   ADMIN_API_KEY
- *   BASE_SEPOLIA_RPC_URL
- *   DEFAULT_CHAIN_ID
- *   PROOF_PRIVATE_KEY
- *   ONESHOT_RELAYER_URL                          optional, defaults to 1Shot dev relayer
- *
- * Removed:
- *   PIMLICO_BUNDLER_URL
- *   SPONSORSHIP_POLICY_ID
- *
- * Important:
- * - Delegation delegator MUST be Hybrid Smart Account address.
- * - Delegation delegate MUST be 1Shot relayer targetAddress.
- * - The executor EOA is NOT the delegation delegate for 1Shot flow.
- */
-
 const PORT = Number(process.env.PORT ?? '3000');
 const API_BASE_URL = `http://localhost:${PORT}`;
 
@@ -61,7 +24,6 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL;
 const DEFAULT_CHAIN_ID = Number(process.env.DEFAULT_CHAIN_ID ?? '84532');
 const PROOF_PRIVATE_KEY = process.env.PROOF_PRIVATE_KEY! as Hex;
-
 const ONESHOT_RELAYER_URL =
   process.env.ONESHOT_RELAYER_URL ??
   process.env.RELAYER_URL ??
@@ -86,19 +48,25 @@ if (DEFAULT_CHAIN_ID !== baseSepolia.id) {
 }
 
 const DEPLOY_SALT = '0x0000000000000000000000000000000000000000000000000000000000000888' as const;
-
 const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as const;
 const WETH = '0x4200000000000000000000000000000000000006' as const;
 const SWAP_ROUTER_02 = '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4' as const;
+const EVENT_SKILL_ID = 'usdc-inbound-dca-84532' as const;
+const TRANSFER_EVENT_SIGNATURE = 'Transfer(address indexed from,address indexed to,uint256 value)' as const;
+const INBOUND_USDC_ATOMS = process.env.PROOF_INBOUND_USDC_ATOMS ?? '1000000';
 
-const AMOUNT_IN_USDC_ATOMS = '100000';
-const FEE_TIER = 3000;
-const MAX_SLIPPAGE_BPS = 50;
-const FREQUENCY = 'daily';
+const CHOSEN_PARAMETERS = {
+  outputToken: (process.env.PROOF_OUTPUT_TOKEN ?? 'weth') as 'weth' | 'cbBtc',
+  spendMode: (process.env.PROOF_SPEND_MODE ?? 'percent-of-inbound') as
+    | 'fixed'
+    | 'percent-of-inbound',
+  amountPerRun: process.env.PROOF_AMOUNT_PER_RUN ?? '100000',
+  percentOfInboundBps: process.env.PROOF_PERCENT_OF_INBOUND_BPS ?? '5000',
+  dailySpendLimit: process.env.PROOF_DAILY_SPEND_LIMIT ?? '900000',
+};
 
-const POLL_AFTER_TRIGGER = true;
-const POLL_INTERVAL_MS = 10_000;
-const POLL_TIMEOUT_MS = 180_000;
+const POLL_INTERVAL_MS = Number(process.env.PROOF_POLL_INTERVAL_MS ?? '5000');
+const POLL_TIMEOUT_MS = Number(process.env.PROOF_POLL_TIMEOUT_MS ?? '180000');
 
 type JsonRpcResponse<T> = {
   jsonrpc?: '2.0';
@@ -153,13 +121,34 @@ type PrepareResponse = {
 };
 
 type ExecutionRecord = {
+  executionId?: string;
   executedAt?: string;
-  status?: 'pending' | 'submitted' | 'confirmed' | 'failed' | string;
+  completedAt?: string;
+  status?: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'skipped' | string;
   oneShotTaskId?: string;
   txHash?: string;
   errorMessage?: string;
-  aiContext?: string;
-  newsContext?: string;
+  skippedReason?: string;
+  trigger?: {
+    type?: string;
+    event?: {
+      chainId?: number;
+      contractAddress?: string;
+      eventSignature?: string;
+      txHash?: string;
+      logIndex?: number;
+      blockNumber?: string;
+      args?: Record<string, unknown>;
+    };
+  };
+  spend?: {
+    tokenAddress?: string;
+    requestedAmount?: string;
+    actualAmount?: string;
+    dailyLimit?: string;
+    periodKey?: string;
+    reservationId?: string;
+  };
   [key: string]: unknown;
 };
 
@@ -173,7 +162,7 @@ type InstallationResponse = {
   signedDelegation?: unknown;
   delegationSalt?: Hex;
   chainId?: number;
-  parameters?: unknown;
+  parameters?: Record<string, unknown>;
   status?: string;
   executions?: ExecutionRecord[];
   lastExecutedAt?: string;
@@ -181,10 +170,17 @@ type InstallationResponse = {
   [key: string]: unknown;
 };
 
+type ExecutionsResponse = {
+  installationId: string;
+  data: ExecutionRecord[];
+};
+
 const publicClient = createPublicClient({
   chain: baseSepolia,
   transport: http(BASE_SEPOLIA_RPC_URL),
 });
+
+const ownerAccount = privateKeyToAccount(PROOF_PRIVATE_KEY);
 
 function stringify(value: unknown, space = 2) {
   return JSON.stringify(
@@ -201,7 +197,7 @@ function stringify(value: unknown, space = 2) {
           name: nested.name,
           message: nested.message,
           stack: nested.stack,
-          ...(nested as any),
+          ...(nested as Record<string, unknown>),
         };
       }
 
@@ -245,7 +241,7 @@ function redactUrl(url: string) {
 }
 
 function errorDetails(err: unknown) {
-  const e = err as any;
+  const e = err as Record<string, any>;
 
   return {
     name: e?.name,
@@ -283,7 +279,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}): Promise<
     ...((options.headers as Record<string, string> | undefined) ?? {}),
   };
 
-  let parsedBody: unknown = undefined;
+  let parsedBody: unknown;
 
   if (typeof options.body === 'string') {
     try {
@@ -318,12 +314,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}): Promise<
     }
   }
 
-  log('HTTP_RESPONSE', {
-    url,
-    status: res.status,
-    ok: res.ok,
-    body,
-  });
+  log('HTTP_RESPONSE', { url, status: res.status, ok: res.ok, body });
 
   if (!res.ok) {
     const message = body?.error?.message ?? body?.message ?? body?.raw ?? `HTTP ${res.status}`;
@@ -336,12 +327,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}): Promise<
 }
 
 async function oneShotRpc<T>(method: string, params: unknown, id = 1): Promise<T> {
-  const body = {
-    jsonrpc: '2.0' as const,
-    id,
-    method,
-    params,
-  };
+  const body = { jsonrpc: '2.0' as const, id, method, params };
 
   log('ONESHOT_RPC_REQUEST', {
     url: redactUrl(ONESHOT_RELAYER_URL),
@@ -358,7 +344,6 @@ async function oneShotRpc<T>(method: string, params: unknown, id = 1): Promise<T
   const text = await res.text();
 
   let json: JsonRpcResponse<T>;
-
   try {
     json = JSON.parse(text) as JsonRpcResponse<T>;
   } catch {
@@ -372,21 +357,13 @@ async function oneShotRpc<T>(method: string, params: unknown, id = 1): Promise<T
     body: json,
   });
 
-  if (!res.ok) {
-    throw new Error(`1Shot HTTP ${res.status}: ${stringify(json)}`);
-  }
-
+  if (!res.ok) throw new Error(`1Shot HTTP ${res.status}: ${stringify(json)}`);
   if (json.error) {
     throw new Error(
-      `1Shot JSON-RPC ${json.error.code}: ${json.error.message} ${stringify(
-        json.error.data ?? '',
-      )}`,
+      `1Shot JSON-RPC ${json.error.code}: ${json.error.message} ${stringify(json.error.data ?? '')}`,
     );
   }
-
-  if (json.result === undefined) {
-    throw new Error(`1Shot missing result: ${stringify(json)}`);
-  }
+  if (json.result === undefined) throw new Error(`1Shot missing result: ${stringify(json)}`);
 
   return json.result;
 }
@@ -399,7 +376,6 @@ async function getOneShotChainInfo(chainId: number): Promise<OneShotChainInfo> {
   );
 
   const direct = capabilities[String(chainId)] as OneShotChainInfo | undefined;
-
   if (direct?.targetAddress) {
     return {
       chainId,
@@ -409,8 +385,10 @@ async function getOneShotChainInfo(chainId: number): Promise<OneShotChainInfo> {
     };
   }
 
-  const chains = (capabilities as any)?.chains ?? [];
-  const found = chains.find((item: any) => String(item.chainId) === String(chainId));
+  const chains = (capabilities as { chains?: Array<Record<string, unknown>> })?.chains ?? [];
+  const found = chains.find((item) => String(item.chainId) === String(chainId)) as
+    | OneShotChainInfo
+    | undefined;
 
   if (found?.targetAddress) {
     return {
@@ -421,23 +399,14 @@ async function getOneShotChainInfo(chainId: number): Promise<OneShotChainInfo> {
   }
 
   throw new Error(
-    `1Shot does not expose targetAddress for chainId=${chainId}. Capabilities=${stringify(
-      capabilities,
-    )}`,
+    `1Shot does not expose targetAddress for chainId=${chainId}. Capabilities=${stringify(capabilities)}`,
   );
 }
 
 async function assertCode(label: string, address: Address) {
   const code = await publicClient.getCode({ address });
-
-  if (!code || code === '0x') {
-    throw new Error(`${label} has no code at ${address}`);
-  }
-
-  log(`${label}_CODE_OK`, {
-    address,
-    codeLength: code.length,
-  });
+  if (!code || code === '0x') throw new Error(`${label} has no code at ${address}`);
+  log(`${label}_CODE_OK`, { address, codeLength: code.length });
 }
 
 async function tokenBalance(token: Address, owner: Address) {
@@ -451,14 +420,7 @@ async function tokenBalance(token: Address, owner: Address) {
 
 async function logTokenBalance(label: string, token: Address, owner: Address, decimals: number) {
   const balance = await tokenBalance(token, owner);
-
-  log(label, {
-    owner,
-    token,
-    raw: balance,
-    formatted: formatUnits(balance, decimals),
-  });
-
+  log(label, { owner, token, raw: balance, formatted: formatUnits(balance, decimals) });
   return balance;
 }
 
@@ -468,35 +430,6 @@ function normalizeSkillsResponse(body: any): any[] {
   if (Array.isArray(body?.items)) return body.items;
   if (Array.isArray(body?.skills)) return body.skills;
   return [];
-}
-
-function getSkillIdentifier(skill: any) {
-  return skill?.skillId;
-}
-
-function selectSkill(skills: any[]) {
-  const bySkillId = skills.find((skill) => skill.skillId == `generic-dca-${DEFAULT_CHAIN_ID}`);
-  if (bySkillId) return bySkillId;
-
-  return skills[0];
-}
-
-function buildDcaConfig(smartAccountAddress: Address, selectedSkill: any) {
-  const amountDefault = selectedSkill?.parameters?.find?.(
-    (param: any) => param?.key === 'amountUsdc',
-  )?.defaultValue;
-
-  return {
-    tokenIn: { address: USDC },
-    tokenOut: { address: WETH },
-    amountPerRun: AMOUNT_IN_USDC_ATOMS || amountDefault || '100000',
-    frequency: FREQUENCY,
-    maxSlippageBps: MAX_SLIPPAGE_BPS,
-    router: { name: 'uniswap-v3', address: SWAP_ROUTER_02 },
-    feeTier: FEE_TIER,
-    recipient: smartAccountAddress,
-    quoteMode: 'router-quote',
-  };
 }
 
 function getInstallationId(installation: InstallationResponse) {
@@ -519,7 +452,7 @@ function getScopeFromPrepare(prepared: PrepareResponse) {
     targets: prepared.delegationScope.targets,
     selectors: prepared.delegationScope.selectors,
     valueLte: { maxValue: 0n },
-  } as any;
+  } as const;
 }
 
 function buildDelegationToSign(params: {
@@ -533,125 +466,58 @@ function buildDelegationToSign(params: {
   if (prepared.delegation) {
     const d = prepared.delegation;
 
-    if (!d.delegate) {
-      throw new Error(`prepared.delegation.delegate missing: ${stringify(prepared)}`);
-    }
-
-    if (!d.delegator) {
-      throw new Error(`prepared.delegation.delegator missing: ${stringify(prepared)}`);
-    }
-
-    if (!d.authority) {
-      throw new Error(`prepared.delegation.authority missing: ${stringify(prepared)}`);
-    }
-
-    if (!d.salt) {
-      throw new Error(`prepared.delegation.salt missing: ${stringify(prepared)}`);
-    }
-
-    if (!Array.isArray(d.caveats)) {
-      throw new Error(`prepared.delegation.caveats missing: ${stringify(prepared)}`);
+    if (!d.delegate || !d.delegator || !d.authority || !d.salt || !Array.isArray(d.caveats)) {
+      throw new Error(`prepare delegation shape incomplete: ${stringify(prepared)}`);
     }
 
     const backendDelegator = getAddress(d.delegator);
     const expectedDelegator = getAddress(smartAccountAddress);
-
     if (backendDelegator !== expectedDelegator) {
       throw new Error(
-        [
-          'prepared.delegation.delegator mismatch.',
-          `Backend returned delegator=${backendDelegator}`,
-          `Expected Hybrid Smart Account=${expectedDelegator}`,
-          '',
-          'Backend /installations/prepare must use:',
-          '  from: smartAccountAddress',
-          'not:',
-          '  from: userAddress / EOA',
-        ].join('\n'),
+        `prepared.delegation.delegator mismatch. got=${backendDelegator} expected=${expectedDelegator}`,
       );
     }
 
     const backendDelegate = getAddress(d.delegate);
     const expectedDelegate = getAddress(oneShotTargetAddress);
-
     if (backendDelegate !== expectedDelegate) {
       throw new Error(
-        [
-          'prepared.delegation.delegate mismatch.',
-          `Backend returned delegate=${backendDelegate}`,
-          `Expected 1Shot targetAddress=${expectedDelegate}`,
-          '',
-          'This is the real cause of the 1Shot error:',
-          `"First delegation's delegate must be the relayer Target wallet".`,
-          '',
-          'Backend /installations/prepare must create delegation with:',
-          '  to: oneShot chainInfo.targetAddress',
-          'not:',
-          '  to: executorService.getAddress()',
-        ].join('\n'),
+        `prepared.delegation.delegate mismatch. got=${backendDelegate} expected=${expectedDelegate}`,
       );
     }
 
-    const delegation = {
-      delegate: backendDelegate,
-      delegator: backendDelegator,
-      authority: d.authority,
-      caveats: d.caveats,
-      salt: d.salt,
-      signature: '0x' as Hex,
-    };
-
-    log('PREPARE_DELEGATION_USED_AS_IS', {
-      backendDelegator: d.delegator,
-      signingDelegator: delegation.delegator,
-      smartAccountAddress,
-      backendDelegate,
-      oneShotTargetAddress,
-      note: 'Proof signs prepared.delegation exactly as returned by backend. No silent override.',
-      caveatsCount: delegation.caveats.length,
-      salt: delegation.salt,
-    });
-
     return {
       source: 'prepared.delegation as-is',
-      delegation,
+      delegation: {
+        delegate: backendDelegate,
+        delegator: backendDelegator,
+        authority: d.authority,
+        caveats: d.caveats,
+        salt: d.salt,
+        signature: '0x' as Hex,
+      },
     };
   }
 
   if (prepared.delegate && prepared.delegationScope) {
     const backendDelegate = getAddress(prepared.delegate);
     const expectedDelegate = getAddress(oneShotTargetAddress);
-
     if (backendDelegate !== expectedDelegate) {
-      throw new Error(
-        [
-          'prepared.delegate mismatch.',
-          `Backend returned delegate=${backendDelegate}`,
-          `Expected 1Shot targetAddress=${expectedDelegate}`,
-          '',
-          'Backend must return the 1Shot target wallet as delegate.',
-        ].join('\n'),
-      );
+      throw new Error(`prepared.delegate mismatch. got=${backendDelegate} expected=${expectedDelegate}`);
     }
-
-    const delegation = createDelegation({
-      environment: smartAccount.environment,
-      from: smartAccountAddress,
-      to: backendDelegate,
-      scope: getScopeFromPrepare(prepared),
-    });
 
     return {
       source: 'prepared.delegate + prepared.delegationScope',
-      delegation,
+      delegation: createDelegation({
+        environment: smartAccount.environment,
+        from: smartAccountAddress,
+        to: backendDelegate,
+        scope: getScopeFromPrepare(prepared),
+      }),
     };
   }
 
-  throw new Error(
-    `Unsupported prepare response shape. Expected prepared.delegation OR prepared.delegate + prepared.delegationScope: ${stringify(
-      prepared,
-    )}`,
-  );
+  throw new Error(`Unsupported prepare response shape: ${stringify(prepared)}`);
 }
 
 function normalizeSignedDelegation(delegation: any, signature: Hex) {
@@ -671,7 +537,6 @@ async function maybeGetAdminExecutor() {
       method: 'GET',
       headers: adminHeaders(),
     });
-
     log('ADMIN_EXECUTOR_LOADED', executor);
     return executor;
   } catch (err) {
@@ -695,80 +560,98 @@ async function assertHybridAlreadyDeployed(smartAccountAddress: Address) {
       [
         `Hybrid Smart Account is not deployed: ${smartAccountAddress}`,
         '',
-        'This no-Pimlico proof intentionally does not deploy Hybrid SA.',
-        'Deploy it once using proof.html or the old Pimlico deploy script, then rerun this proof.',
-        '',
-        'Reason:',
-        '- Hybrid SA deploy uses ERC-4337 UserOperation.',
-        '- This proof uses backend 1Shot only for DCA execution after delegation is confirmed.',
+        'Deploy it once using proof.html or the older proof flow, then rerun this trigger proof.',
       ].join('\n'),
     );
   }
 }
 
-function latestExecutionOf(installation: InstallationResponse): ExecutionRecord | undefined {
-  const executions = Array.isArray(installation.executions) ? installation.executions : [];
-  return executions[0];
+function assertParametersPersisted(installation: InstallationResponse) {
+  const parameters = installation.parameters ?? {};
+  for (const [key, value] of Object.entries(CHOSEN_PARAMETERS)) {
+    if (String(parameters[key]) !== String(value)) {
+      throw new Error(
+        `Installation parameter mismatch for ${key}: got=${parameters[key]} expected=${value}`,
+      );
+    }
+  }
 }
 
-function isTerminalExecutionStatus(status: unknown) {
-  return status === 'confirmed' || status === 'failed';
+function hasRequiredExecutionMetadata(execution: ExecutionRecord, smartAccountAddress: Address) {
+  const triggerType = execution.trigger?.type;
+  const event = execution.trigger?.event;
+  const spend = execution.spend;
+
+  return (
+    triggerType === 'event-trigger' &&
+    getAddress(String(event?.args?.to ?? '0x0000000000000000000000000000000000000000')) ===
+      getAddress(smartAccountAddress) &&
+    String(spend?.requestedAmount ?? '').length > 0 &&
+    String(spend?.actualAmount ?? '').length > 0 &&
+    String(spend?.dailyLimit ?? '').length > 0 &&
+    String(spend?.periodKey ?? '').length > 0
+  );
 }
 
-async function pollInstallationAfterTrigger(params: {
+async function pollExecutionHistory(params: {
   installationId: string;
-  before: InstallationResponse;
+  smartAccountAddress: Address;
+  expectedTriggerType: 'event-trigger';
 }) {
-  const { installationId, before } = params;
-
+  const { installationId, smartAccountAddress, expectedTriggerType } = params;
   const deadline = Date.now() + POLL_TIMEOUT_MS;
-  const beforeCount = Array.isArray(before.executions) ? before.executions.length : 0;
-  const beforeLastExecutedAt = before.lastExecutedAt ?? '';
-
-  let latest = before;
 
   while (Date.now() < deadline) {
-    latest = await requestJson<InstallationResponse>(`/installations/${installationId}`, {
-      method: 'GET',
+    const historyResponse = await requestJson<ExecutionsResponse | ExecutionRecord[]>(
+      `/installations/${installationId}/executions`,
+      {
+        method: 'GET',
+      },
+    );
+    const executions = Array.isArray(historyResponse) ? historyResponse : historyResponse.data;
+    const history = Array.isArray(historyResponse)
+      ? { installationId, data: executions }
+      : historyResponse;
+
+    const match = executions.find((execution) => {
+      if (execution.trigger?.type !== expectedTriggerType) return false;
+      return hasRequiredExecutionMetadata(execution, smartAccountAddress);
     });
 
-    const executions = Array.isArray(latest.executions) ? latest.executions : [];
-    const latestExecution = executions[0];
-
-    const hasNewExecution =
-      executions.length > beforeCount ||
-      Boolean(latest.lastExecutedAt && latest.lastExecutedAt !== beforeLastExecutedAt);
-
-    log('INSTALLATION_POLL_TICK', {
+    log('EXECUTION_HISTORY_POLL_TICK', {
       installationId,
-      installationStatus: latest.status,
-      beforeCount,
       executionsCount: executions.length,
-      beforeLastExecutedAt,
-      lastExecutedAt: latest.lastExecutedAt,
-      hasNewExecution,
-      latestExecution,
+      latestExecution: executions[0],
+      matchedExecution: match,
     });
 
-    if (hasNewExecution && latestExecution && isTerminalExecutionStatus(latestExecution.status)) {
-      return latest;
-    }
-
-    if (hasNewExecution && latestExecution?.status === 'submitted') {
-      log('EXECUTION_SUBMITTED_WAITING_FOR_1SHOT_POLL', {
-        oneShotTaskId: latestExecution.oneShotTaskId,
-        txHash: latestExecution.txHash,
-      });
+    if (match) {
+      return { history, execution: match };
     }
 
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 
-  throw new Error(`Timed out polling installation execution for ${installationId}`);
+  throw new Error(`Timed out waiting for execution history metadata on installation ${installationId}`);
+}
+
+function logTransferInstructions(params: { owner: Address; smartAccountAddress: Address }) {
+  log('WAITING_FOR_ONCHAIN_USDC_TRANSFER', {
+    instruction: 'Send USDC on Base Sepolia to the smartAccountAddress. Backend EventRunnerService must catch the Transfer event and execute the skill.',
+    chainId: DEFAULT_CHAIN_ID,
+    token: USDC,
+    suggestedAmountAtoms: INBOUND_USDC_ATOMS,
+    fromAnyAddress: true,
+    proofOwnerAddress: params.owner,
+    smartAccountAddress: params.smartAccountAddress,
+    expectedEventSignature: TRANSFER_EVENT_SIGNATURE,
+    expectedHistoryTriggerType: 'event-trigger',
+    pollTimeoutMs: POLL_TIMEOUT_MS,
+  });
 }
 
 async function main() {
-  step('SkillWallet proof.ts — no Pimlico: prepare → confirm → admin trigger');
+  step('SkillWallet proof-trigger-dca.ts — seed → prepare → confirm → event trigger → executions history');
 
   log('CONFIG', {
     API_BASE_URL,
@@ -777,27 +660,23 @@ async function main() {
     ONESHOT_RELAYER_URL: redactUrl(ONESHOT_RELAYER_URL),
     DEFAULT_CHAIN_ID,
     PROOF_PRIVATE_KEY: 'REDACTED',
-    // PREFERRED_SKILL_ID,
     DEPLOY_SALT,
+    EVENT_SKILL_ID,
     USDC,
     WETH,
     SWAP_ROUTER_02,
-    AMOUNT_IN_USDC_ATOMS,
-    FEE_TIER,
-    MAX_SLIPPAGE_BPS,
-    POLL_AFTER_TRIGGER,
+    mode: 'watch-event-trigger',
+    INBOUND_USDC_ATOMS,
+    CHOSEN_PARAMETERS,
     POLL_INTERVAL_MS,
     POLL_TIMEOUT_MS,
   });
 
   step('0. Sanity check contracts, admin executor, and 1Shot target');
-
   await assertCode('USDC', USDC);
   await assertCode('WETH', WETH);
   await assertCode('SwapRouter02', SWAP_ROUTER_02);
-
   const adminExecutor = await maybeGetAdminExecutor();
-
   const oneShotChainInfo = await getOneShotChainInfo(DEFAULT_CHAIN_ID);
   const oneShotTargetAddress = getAddress(oneShotChainInfo.targetAddress!);
 
@@ -806,18 +685,10 @@ async function main() {
     oneShotChainInfo,
     oneShotTargetAddress,
     adminExecutorAddress: adminExecutor?.address,
-    note: 'Delegation delegate must equal oneShotTargetAddress, not admin executor EOA.',
   });
 
-  step('1. Load owner from PROOF_PRIVATE_KEY');
-
-  const ownerAccount = privateKeyToAccount(PROOF_PRIVATE_KEY);
+  step('1. Load owner and create Hybrid Smart Account object');
   const owner = getAddress(ownerAccount.address);
-
-  log('OWNER_ACCOUNT_LOADED', { owner });
-
-  step('2. Create Hybrid MetaMask Smart Account object');
-
   const smartAccount = await toMetaMaskSmartAccount({
     client: publicClient as any,
     implementation: Implementation.Hybrid,
@@ -825,7 +696,6 @@ async function main() {
     deploySalt: DEPLOY_SALT,
     signer: { account: ownerAccount },
   });
-
   const smartAccountAddress = getAddress(
     (smartAccount.address || (await smartAccount.getAddress?.())) as Address,
   );
@@ -834,50 +704,37 @@ async function main() {
     owner,
     smartAccountAddress,
     deploySalt: DEPLOY_SALT,
-    keys: Object.keys(smartAccount as any),
     environment: (smartAccount as any).environment,
   });
 
   await logTokenBalance('OWNER_USDC_BEFORE', USDC, owner, 6);
-  await logTokenBalance('OWNER_WETH_BEFORE', WETH, owner, 18);
   await logTokenBalance('SMART_ACCOUNT_USDC_BEFORE', USDC, smartAccountAddress, 6);
-  await logTokenBalance('SMART_ACCOUNT_WETH_BEFORE', WETH, smartAccountAddress, 18);
-
-  step('3. Require already-deployed Hybrid Smart Account');
-
   await assertHybridAlreadyDeployed(smartAccountAddress);
 
-  step('4. GET /skills and select existing skill document');
+  step('2. Seed built-in skills and select the event-trigger skill');
+  const seeded = await requestJson<{ seeded: string[] }>('/admin/skills/seed', {
+    method: 'POST',
+    headers: adminHeaders(),
+  });
+
+  if (!seeded.seeded.includes('Generic DCA') || !seeded.seeded.includes('USDC Inbound DCA')) {
+    throw new Error(`Seed response missing required built-ins: ${stringify(seeded)}`);
+  }
 
   const skillsBody = await requestJson<any>('/skills');
   const skills = normalizeSkillsResponse(skillsBody);
+  const selectedSkill = skills.find((skill) => skill.skillId === EVENT_SKILL_ID);
+  if (!selectedSkill) throw new Error(`Could not find ${EVENT_SKILL_ID} in /skills response`);
 
-  log('SKILLS_LOADED', { count: skills.length, skills });
+  log('SKILL_SELECTED_FROM_BACKEND', { selectedSkill });
 
-  const selectedSkill = selectSkill(skills);
-  if (!selectedSkill) throw new Error('No skill found from /skills');
-
-  const skillId = getSkillIdentifier(selectedSkill);
-  if (!skillId) {
-    throw new Error(`Selected skill has no skillId/_id/id: ${stringify(selectedSkill)}`);
-  }
-
-  log('SKILL_SELECTED_FROM_BACKEND', {
-    // preferred: PREFERRED_SKILL_ID,
-    selectedIdentifier: skillId,
-    selectedSkill,
-  });
-
-  step('5. POST /installations/prepare');
-
-  const dcaConfig = buildDcaConfig(smartAccountAddress, selectedSkill);
-
+  step('3. POST /installations/prepare');
   const prepareInput = {
     userAddress: owner,
     smartAccountAddress,
     chainId: DEFAULT_CHAIN_ID,
-    skillId,
-    config: dcaConfig,
+    skillId: EVENT_SKILL_ID,
+    parameters: CHOSEN_PARAMETERS,
   };
 
   let installationId = '';
@@ -888,94 +745,44 @@ async function main() {
       body: JSON.stringify(prepareInput),
     });
 
-    log('PREPARE_DONE', {
-      input: prepareInput,
-      prepared,
-      detectedShape: prepared.delegation
-        ? 'prepared.delegation'
-        : prepared.delegate && prepared.delegationScope
-          ? 'prepared.delegate + prepared.delegationScope'
-          : 'unknown',
-    });
+    log('PREPARE_DONE', { input: prepareInput, prepared });
 
-    if (prepared.executorAddress && adminExecutor?.address) {
-      const preparedExecutor = getAddress(prepared.executorAddress);
-      const adminExecutorAddress = getAddress(adminExecutor.address);
-
-      if (preparedExecutor !== adminExecutorAddress) {
-        log('EXECUTOR_ADDRESS_MISMATCH_WARNING', {
-          preparedExecutor,
-          adminExecutorAddress,
-          note: 'If this is unexpected, backend may have restarted with a different EXECUTOR_PRIVATE_KEY.',
-        });
-      }
-    }
-
-    step('6. Build and sign delegation');
-
+    step('4. Build and sign delegation');
     const { source, delegation } = buildDelegationToSign({
       prepared,
       smartAccount,
       smartAccountAddress,
       oneShotTargetAddress,
     });
-
     log('DELEGATION_TO_SIGN', { source, delegation });
 
-    let delegationSignature: Hex;
-
-    try {
-      delegationSignature = await smartAccount.signDelegation({
-        delegation: delegation as any,
-      });
-
-      log('DELEGATION_SIGNATURE_OK', {
-        signature: delegationSignature,
-        signaturePrefix: `${delegationSignature.slice(0, 22)}…`,
-      });
-    } catch (err) {
-      log('DELEGATION_SIGNATURE_FAILED', errorDetails(err));
-      throw err;
-    }
-
+    const delegationSignature = await smartAccount.signDelegation({ delegation: delegation as any });
     const signedDelegation = normalizeSignedDelegation(delegation, delegationSignature);
-
     log('SIGNED_DELEGATION_NORMALIZED', signedDelegation);
 
-    step('7. POST /installations/confirm');
-
+    step('5. POST /installations/confirm');
     const delegationSalt = prepared.salt ?? prepared.delegation?.salt;
-
-    if (!delegationSalt) {
-      throw new Error(`prepare did not return salt/delegation.salt: ${stringify(prepared)}`);
-    }
+    if (!delegationSalt) throw new Error(`prepare did not return salt/delegation.salt: ${stringify(prepared)}`);
 
     const confirmInput = {
       userAddress: owner,
       smartAccountAddress,
       chainId: DEFAULT_CHAIN_ID,
-      skillId,
+      skillId: EVENT_SKILL_ID,
       signedDelegation,
       delegationSalt,
-      parameters: dcaConfig,
+      parameters: CHOSEN_PARAMETERS,
     };
 
     const confirmed = await requestJson<InstallationResponse>('/installations/confirm', {
       method: 'POST',
       body: JSON.stringify(confirmInput),
     });
-
     installationId = getInstallationId(confirmed);
+    if (!installationId) throw new Error(`confirm did not return installation id: ${stringify(confirmed)}`);
 
-    log('CONFIRM_DONE', {
-      confirmInput,
-      confirmed,
-      installationId,
-    });
-
-    if (!installationId) {
-      throw new Error(`confirm did not return installation id: ${stringify(confirmed)}`);
-    }
+    log('CONFIRM_DONE', { confirmInput, confirmed, installationId });
+    assertParametersPersisted(confirmed);
   } catch (err) {
     const existingInstallationId = getAlreadyInstalledId(err);
     if (!existingInstallationId) throw err;
@@ -984,115 +791,60 @@ async function main() {
     log('INSTALLATION_ALREADY_EXISTS_REUSED', { installationId, error: errorDetails(err) });
   }
 
-  step('8. GET /installations/:id before trigger');
-
-  const beforeTrigger = await requestJson<InstallationResponse>(
-    `/installations/${installationId}`,
-    {
-      method: 'GET',
-    },
-  );
-
-  log('INSTALLATION_BEFORE_TRIGGER', {
-    installationId,
-    installation: beforeTrigger,
-    latestExecution: latestExecutionOf(beforeTrigger),
-  });
-
-  step('9. POST /admin/installations/:id/trigger');
-
-  const triggerResult = await requestJson<any>(`/admin/installations/${installationId}/trigger`, {
-    method: 'POST',
-    headers: adminHeaders(),
-    body: JSON.stringify({ force: true }),
-  });
-
-  log('ADMIN_TRIGGER_DONE', {
-    installationId,
-    triggerResult,
-  });
-
-  step('10. GET /installations/:id after trigger');
-
-  const afterTrigger = await requestJson<InstallationResponse>(`/installations/${installationId}`, {
+  step('6. Confirm installation and parameters before triggering');
+  const installationBeforeTrigger = await requestJson<InstallationResponse>(`/installations/${installationId}`, {
     method: 'GET',
   });
+  assertParametersPersisted(installationBeforeTrigger);
 
-  log('INSTALLATION_AFTER_TRIGGER', {
+  log('INSTALLATION_BEFORE_TRIGGER', { installationId, installation: installationBeforeTrigger });
+
+  step('7. Watch for real onchain USDC Transfer event');
+  logTransferInstructions({ owner, smartAccountAddress });
+
+  step('8. Poll GET /installations/:id/executions for proof-ready event-trigger + spend metadata');
+  const expectedTriggerType = 'event-trigger' as const;
+  const { history, execution } = await pollExecutionHistory({
     installationId,
-    installation: afterTrigger,
-    latestExecution: latestExecutionOf(afterTrigger),
+    smartAccountAddress,
+    expectedTriggerType,
   });
 
-  let finalInstallation = afterTrigger;
-
-  if (POLL_AFTER_TRIGGER) {
-    step('11. Poll /installations/:id for terminal execution');
-
-    finalInstallation = await pollInstallationAfterTrigger({
-      installationId,
-      before: beforeTrigger,
-    });
-
-    log('INSTALLATION_FINAL', {
-      installationId,
-      installation: finalInstallation,
-      latestExecution: latestExecutionOf(finalInstallation),
-    });
+  const expectedTo = getAddress(smartAccountAddress);
+  const actualTo = getAddress(String(execution.trigger?.event?.args?.to));
+  if (actualTo !== expectedTo) {
+    throw new Error(`Execution event.to mismatch: got=${actualTo} expected=${expectedTo}`);
   }
 
-  step('12. Final balances');
+  if (String(execution.spend?.dailyLimit) !== String(CHOSEN_PARAMETERS.dailySpendLimit)) {
+    throw new Error(
+      `Execution spend.dailyLimit mismatch: got=${execution.spend?.dailyLimit} expected=${CHOSEN_PARAMETERS.dailySpendLimit}`,
+    );
+  }
 
+  log('EXECUTION_HISTORY_ASSERTED', {
+    installationId,
+    executionsCount: history.data.length,
+    matchedExecution: execution,
+  });
+
+  step('9. Final balances and summary');
   const ownerUsdcAfter = await logTokenBalance('OWNER_USDC_AFTER', USDC, owner, 6);
-  const ownerWethAfter = await logTokenBalance('OWNER_WETH_AFTER', WETH, owner, 18);
-  const smartUsdcAfter = await logTokenBalance(
-    'SMART_ACCOUNT_USDC_AFTER',
-    USDC,
-    smartAccountAddress,
-    6,
-  );
-  const smartWethAfter = await logTokenBalance(
-    'SMART_ACCOUNT_WETH_AFTER',
-    WETH,
-    smartAccountAddress,
-    18,
-  );
-
-  const latestExecution = latestExecutionOf(finalInstallation);
-
-  step('PROOF SCRIPT FINISHED');
+  const smartUsdcAfter = await logTokenBalance('SMART_ACCOUNT_USDC_AFTER', USDC, smartAccountAddress, 6);
 
   log('SUMMARY', {
     owner,
     smartAccountAddress,
-    selectedSkillId: skillId,
     installationId,
-    triggerResult,
-    latestExecution,
+    selectedSkillId: EVENT_SKILL_ID,
+    mode: 'watch-event-trigger',
+    chosenParameters: CHOSEN_PARAMETERS,
+    matchedExecution: execution,
     balances: {
-      owner: {
-        usdc: formatUnits(ownerUsdcAfter, 6),
-        weth: formatUnits(ownerWethAfter, 18),
-      },
-      smartAccount: {
-        usdc: formatUnits(smartUsdcAfter, 6),
-        weth: formatUnits(smartWethAfter, 18),
-      },
+      ownerUsdc: formatUnits(ownerUsdcAfter, 6),
+      smartAccountUsdc: formatUnits(smartUsdcAfter, 6),
     },
   });
-
-  if (latestExecution?.status === 'failed') {
-    throw new Error(
-      `Execution failed: ${latestExecution.errorMessage ?? stringify(latestExecution)}`,
-    );
-  }
-
-  if (latestExecution?.status !== 'confirmed') {
-    log('NON_TERMINAL_OR_UNKNOWN_EXECUTION_STATUS_WARNING', {
-      latestExecution,
-      note: 'Script finished, but latest execution was not confirmed. Check backend logs and 1Shot status.',
-    });
-  }
 }
 
 main().catch((err) => {
