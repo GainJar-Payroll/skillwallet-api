@@ -3,7 +3,6 @@ import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { encodeFunctionData, erc20Abi, getAddress } from 'viem';
 import { getChainConfig, ChainConfig } from '../../config/chains.config';
-import { Skill } from '../skills/schemas/skill.schema';
 import { SkillsService } from '../skills/skills.service';
 import { InstallationsService } from '../installations/installations.service';
 import { OneShotExecution, OneShotService, OneShotStatus } from '../oneshot/oneshot.service';
@@ -16,7 +15,6 @@ import {
   Installation,
 } from '../installations/schemas/installation.schema';
 import { GM_ABI, SWAP_ROUTER_02_ABI } from './abis';
-import { detectDcaExecution, normalizeSkillExecution } from '../skills/skill-config.util';
 import { SpendReservationsService } from '../spend-reservations/spend-reservations.service';
 
 const FEE_AMOUNT_ATOMS = 10_000n;
@@ -55,28 +53,10 @@ export class RunnerService {
         ? String((installation.skillId as { skillId: unknown }).skillId)
         : String(installation.skillId);
 
-    const skill = await this.skillsService.findById(skillId);
     const chainConfig = getChainConfig(installation.chainId);
 
-    let executions: OneShotExecution[];
     let aiContext: string | undefined;
     let newsContext: string | undefined;
-    const execution = normalizeSkillExecution(skill);
-
-    if (execution?.kind === 'dca-uniswap-v3' || detectDcaExecution(skill)) {
-      const result = await this.buildDcaExecutions(installation, chainConfig, {
-        amountIn: context.spend?.actualAmount,
-        feeTier:
-          typeof execution?.defaultFeeTier === 'number' ? Number(execution.defaultFeeTier) : undefined,
-      });
-      executions = result.executions;
-      aiContext = result.aiContext;
-      newsContext = result.newsContext;
-    } else if (skill.name === 'GM Everyday') {
-      executions = await this.buildGmExecutions(installation, chainConfig);
-    } else {
-      throw new Error(`Unknown skill: ${skill.name}`);
-    }
 
     const capabilities = await this.oneShotService.getCapabilities(installation.chainId);
     const chainKey = String(installation.chainId);
@@ -92,7 +72,7 @@ export class RunnerService {
     }
 
     const feeTransfer = this.buildFeeTransfer(chainConfig, feeCollector);
-    const allExecutions = [feeTransfer, ...executions];
+    const allExecutions = [feeTransfer];
 
     const record: ExecutionRecord = {
       executionId: randomUUID(),
@@ -197,7 +177,9 @@ export class RunnerService {
     const parameters = installation.parameters ?? {};
 
     const amountUsdc = BigInt(
-      String(options.amountIn ?? parameters['amountPerRun'] ?? parameters['amountUsdc'] ?? '10000000'),
+      String(
+        options.amountIn ?? parameters['amountPerRun'] ?? parameters['amountUsdc'] ?? '10000000',
+      ),
     );
 
     const tokenOutFromConfig = (parameters['tokenOut'] as { address?: string } | undefined)

@@ -4,8 +4,6 @@ import { getConnectionToken } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { OneShotService } from '../src/modules/oneshot/oneshot.service';
 import { X402Service } from '../src/modules/x402/x402.service';
 import { VeniceService } from '../src/modules/venice/venice.service';
@@ -42,15 +40,8 @@ describe('API route smoke e2e', () => {
     send7710Transaction: jest.Mock;
     poll: jest.Mock;
   };
-  const proofAppDir = join(process.cwd(), 'public', 'proof-app');
 
   beforeAll(async () => {
-    mkdirSync(proofAppDir, { recursive: true });
-    writeFileSync(
-      join(proofAppDir, 'index.html'),
-      '<!DOCTYPE html><html><body><div id="root">SkillWallet Proof Dashboard</div></body></html>',
-    );
-
     process.env.MONGODB_URI = dbUriFor('api-routes');
     process.env.MONGODB_DB_NAME = 'api-routes';
     const { AppModule } = await import('../src/app.module');
@@ -84,7 +75,6 @@ describe('API route smoke e2e', () => {
       await conn?.dropDatabase();
     } catch {}
     await app?.close();
-    rmSync(proofAppDir, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -103,8 +93,8 @@ describe('API route smoke e2e', () => {
   it('serves the API index at /', async () => {
     const res = await request(app.getHttpServer()).get('/').expect(200);
     expect(res.body.name).toBe('SkillWallet Backend');
-    expect(res.body.endpoints.proof).toBe('/proof');
     expect(res.body.endpoints.docs).toBe('/docs');
+    expect(res.body.endpoints.skills).toBe('/skills');
   });
 
   it('serves the OpenAPI document and Swagger UI under /docs', async () => {
@@ -129,28 +119,6 @@ describe('API route smoke e2e', () => {
 
     const ui = await request(app.getHttpServer()).get('/docs').expect(200);
     expect(ui.text.toLowerCase()).toContain('swagger');
-  });
-
-  it('serves the proof harness at /proof', async () => {
-    const res = await request(app.getHttpServer()).get('/proof').expect(200);
-    expect(res.headers['content-type']).toContain('text/html');
-    expect(res.text).toContain('SkillWallet Proof Dashboard');
-  });
-
-  it('serves browser-safe proof runtime config at /proof/config', async () => {
-    const res = await request(app.getHttpServer()).get('/proof/config').expect(200);
-
-    expect(res.body).toEqual(
-      expect.objectContaining({
-        clientId: process.env.CLIENT_ID,
-        chainId: 84532,
-        chainIdHex: '0x14a34',
-        pimlicoBundlerUrl: process.env.PIMLICO_BUNDLER_URL,
-        sponsorshipPolicyId: process.env.SPONSORSHIP_POLICY_ID,
-      }),
-    );
-    expect(res.body.clientSecret).toBeUndefined();
-    expect(res.body.CLIENT_SECRET).toBeUndefined();
   });
 
   it('calls health and executor read APIs', async () => {
@@ -406,12 +374,5 @@ describe('API route smoke e2e', () => {
       .get(`/installations?userAddress=${TEST_USER}`)
       .expect(200);
     expect(installations.body.data).toEqual([]);
-  });
-
-  it('calls proof task status API', async () => {
-    const taskId = '0x' + 'ab'.repeat(32);
-    const res = await request(app.getHttpServer()).get(`/proof/status/${taskId}`).expect(200);
-    expect(res.body.status).toBe(200);
-    expect(oneShot.getStatus).toHaveBeenCalledWith(taskId);
   });
 });

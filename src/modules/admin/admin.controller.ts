@@ -26,7 +26,6 @@ const GENERIC_DCA_TEMPLATE: CreateSkillDto = {
   iconUrl:
     'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/usdc.png',
   runType: 'cron',
-  cronExpression: '0 9 * * *',
   chainId: 84532,
   delegationScope: {
     type: 'FunctionCall',
@@ -76,7 +75,11 @@ const GENERIC_DCA_TEMPLATE: CreateSkillDto = {
     },
   ],
   isActive: true,
-  metadata: { category: 'DeFi', kind: 'dca', risk: 'medium', builtin: true },
+  trigger: {
+    type: 'cron',
+    cronExpression: '0 9 * * *',
+  },
+  metadata: { category: 'DeFi' },
 };
 
 const USDC_INBOUND_DCA_TEMPLATE: CreateSkillDto = {
@@ -88,17 +91,6 @@ const USDC_INBOUND_DCA_TEMPLATE: CreateSkillDto = {
     'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/usdc.png',
   runType: 'event-trigger',
   chainId: 84532,
-  eventTriggerConfig: {
-    type: 'event-trigger',
-    chainId: 84532,
-    contractAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    eventSignature: 'Transfer(address indexed from,address indexed to,uint256 value)',
-    filterArgs: {
-      to: { source: 'installation', path: 'smartAccountAddress' },
-    },
-    confirmations: 1,
-    dedupeKey: 'txHash-logIndex',
-  },
   trigger: {
     type: 'event-trigger',
     chainId: 84532,
@@ -109,12 +101,6 @@ const USDC_INBOUND_DCA_TEMPLATE: CreateSkillDto = {
     },
     confirmations: 1,
     dedupeKey: 'txHash-logIndex',
-  },
-  execution: {
-    kind: 'dca-uniswap-v3',
-    tokenIn: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    router: '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4',
-    defaultFeeTier: 3000,
   },
   delegationScope: {
     type: 'FunctionCall',
@@ -204,7 +190,7 @@ const USDC_INBOUND_DCA_TEMPLATE: CreateSkillDto = {
     },
   },
   isActive: true,
-  metadata: { category: 'DeFi', kind: 'dca', risk: 'medium', builtin: true },
+  metadata: { category: 'DeFi' },
 };
 
 @ApiTags('Admin')
@@ -257,7 +243,10 @@ export class AdminController {
     const seeded: string[] = [];
     await this.skillsService.upsertByName(GENERIC_DCA_TEMPLATE.name, GENERIC_DCA_TEMPLATE);
     seeded.push(GENERIC_DCA_TEMPLATE.name);
-    await this.skillsService.upsertByName(USDC_INBOUND_DCA_TEMPLATE.name, USDC_INBOUND_DCA_TEMPLATE);
+    await this.skillsService.upsertByName(
+      USDC_INBOUND_DCA_TEMPLATE.name,
+      USDC_INBOUND_DCA_TEMPLATE,
+    );
     seeded.push(USDC_INBOUND_DCA_TEMPLATE.name);
     return { seeded };
   }
@@ -265,7 +254,8 @@ export class AdminController {
   @Post('events/simulate')
   @ApiOperation({
     summary: 'Simulate an event-triggered skill event',
-    description: 'Routes the payload through the same shared event handler used by live event watchers.',
+    description:
+      'Routes the payload through the same shared event handler used by live event watchers.',
   })
   @ApiOkResponse({ description: 'Shared event handler summary' })
   async simulateEvent(@Body() dto: SimulateEventDto) {
@@ -278,10 +268,8 @@ export class AdminController {
           chainId: dto.chainId,
           contractAddress: String(dto.event['contractAddress']),
           eventSignature: String(dto.event['eventSignature']),
-          txHash:
-            dto.event['txHash'] !== undefined ? String(dto.event['txHash']) : undefined,
-          logIndex:
-            dto.event['logIndex'] !== undefined ? Number(dto.event['logIndex']) : undefined,
+          txHash: dto.event['txHash'] !== undefined ? String(dto.event['txHash']) : undefined,
+          logIndex: dto.event['logIndex'] !== undefined ? Number(dto.event['logIndex']) : undefined,
           blockNumber:
             dto.event['blockNumber'] !== undefined ? String(dto.event['blockNumber']) : undefined,
           args:

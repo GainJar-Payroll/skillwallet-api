@@ -4,6 +4,7 @@ import { InstallationsService } from '../installations/installations.service';
 import { SpendReservationsService } from '../spend-reservations/spend-reservations.service';
 import { SkillsService } from '../skills/skills.service';
 import { buildInstallation, buildSkill } from '../../../test/helpers';
+import { ProcessedEventService } from './processed-event.service';
 import { RunnerService } from './runner.service';
 import { SkillEventHandlerService } from './skill-event-handler.service';
 
@@ -13,6 +14,7 @@ describe('SkillEventHandlerService', () => {
   let installations: { findActiveBySkillId: jest.Mock; appendExecution: jest.Mock };
   let runner: { executeInstallation: jest.Mock };
   let spendReservations: { reserveDailySpend: jest.Mock };
+  let processedEvents: { tryMarkProcessed: jest.Mock };
 
   beforeEach(async () => {
     skills = { findById: jest.fn() };
@@ -22,6 +24,7 @@ describe('SkillEventHandlerService', () => {
     };
     runner = { executeInstallation: jest.fn() };
     spendReservations = { reserveDailySpend: jest.fn() };
+    processedEvents = { tryMarkProcessed: jest.fn().mockResolvedValue(true) };
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -30,6 +33,7 @@ describe('SkillEventHandlerService', () => {
         { provide: InstallationsService, useValue: installations },
         { provide: RunnerService, useValue: runner },
         { provide: SpendReservationsService, useValue: spendReservations },
+        { provide: ProcessedEventService, useValue: processedEvents },
       ],
     }).compile();
 
@@ -120,6 +124,39 @@ describe('SkillEventHandlerService', () => {
     });
 
     expect(result.dedupedInstallations).toBe(1);
+    expect(runner.executeInstallation).not.toHaveBeenCalled();
+  });
+
+  it('dedupes atomically claimed event tuples before reserving spend', async () => {
+    const skill = buildEventSkill();
+    const installation = buildInstallation({ skillId: skill.skillId });
+
+    skills.findById.mockResolvedValue(skill);
+    installations.findActiveBySkillId.mockResolvedValue([installation]);
+    processedEvents.tryMarkProcessed.mockResolvedValue(false);
+
+    const result = await service.handleSkillEvent({
+      skillId: skill.skillId,
+      chainId: 84532,
+      triggerType: 'event-trigger',
+      event: {
+        chainId: 84532,
+        contractAddress: getChainConfig(84532).tokens.usdc,
+        eventSignature: 'Transfer(address indexed from,address indexed to,uint256 value)',
+        txHash: '0x' + 'aa'.repeat(32),
+        logIndex: 3,
+        args: { to: installation.smartAccountAddress, value: '1000000' },
+      },
+    });
+
+    expect(result.dedupedInstallations).toBe(1);
+    expect(processedEvents.tryMarkProcessed).toHaveBeenCalledWith({
+      chainId: 84532,
+      contractAddress: getChainConfig(84532).tokens.usdc,
+      txHash: '0x' + 'aa'.repeat(32),
+      logIndex: 3,
+    });
+    expect(spendReservations.reserveDailySpend).not.toHaveBeenCalled();
     expect(runner.executeInstallation).not.toHaveBeenCalled();
   });
 

@@ -47,7 +47,6 @@ export class ExecutorService implements OnModuleInit {
   getInfo(): ExecutorInfo {
     return {
       address: this.account.address,
-      privateKey: this.config.get<`0x${string}`>('executorPrivateKey')!,
     };
   }
 

@@ -104,23 +104,29 @@ describe('OneShotService', () => {
   describe('poll', () => {
     it('returns when status=200', async () => {
       mockFetchSequence([{ ok: true, status: 200, json: () => ({ result: { status: 200, hash: '0xH' } }) }]);
-      const out = await service.poll(TASK_ID, 5000);
+      const out = await service.poll(TASK_ID, { timeoutMs: 5000, intervalMs: 1 });
       expect(out.status).toBe(200);
     });
 
     it('throws on status=400', async () => {
       mockFetchSequence([{ ok: true, status: 200, json: () => ({ result: { status: 400, message: 'rejected' } }) }]);
-      await expect(service.poll(TASK_ID, 5000)).rejects.toThrow(/rejected/);
+      await expect(
+        service.poll(TASK_ID, { timeoutMs: 5000, intervalMs: 1 }),
+      ).rejects.toThrow(/rejected/);
     });
 
     it('throws on status=500', async () => {
       mockFetchSequence([{ ok: true, status: 200, json: () => ({ result: { status: 500, message: 'reverted' } }) }]);
-      await expect(service.poll(TASK_ID, 5000)).rejects.toThrow(/reverted/);
+      await expect(
+        service.poll(TASK_ID, { timeoutMs: 5000, intervalMs: 1 }),
+      ).rejects.toThrow(/reverted/);
     });
 
     it('times out after deadline', async () => {
       mockFetchSequence([{ ok: true, status: 200, json: () => ({ result: { status: 100 } }) }]);
-      await expect(service.poll(TASK_ID, 100)).rejects.toThrow(/timed out/);
+      await expect(
+        service.poll(TASK_ID, { timeoutMs: 100, intervalMs: 1 }),
+      ).rejects.toThrow(/timed out/);
     });
   });
 });

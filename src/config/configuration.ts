@@ -13,13 +13,12 @@ export const validationSchema = Joi.object({
   BASE_MAINNET_RPC_URL: Joi.string().uri().required(),
   DEFAULT_CHAIN_ID: Joi.number().valid(84532, 8453).default(84532),
   ONESHOT_RELAYER_URL: Joi.string().uri().required(),
+  ONESHOT_POLL_INTERVAL_MS: Joi.number().integer().positive().optional(),
+  ONESHOT_POLL_TIMEOUT_MS: Joi.number().integer().positive().optional(),
   VENICE_API_BASE: Joi.string().uri().default('https://api.venice.ai/api/v1'),
   VENICE_MODEL: Joi.string().default('google/gemini-2.5-flash'),
   VENICE_TOPUP_AMOUNT_USD: Joi.number().default(5),
   OTTOAI_NEWS_URL: Joi.string().uri().default('https://x402.ottoai.services/crypto-news'),
-  PROOF_DELEGATOR_PRIVATE_KEY: Joi.string()
-    .pattern(/^0x[0-9a-fA-F]{64}$/)
-    .optional(),
   RUNNER_ENABLED: Joi.boolean().default(true),
 });
 
@@ -35,6 +34,12 @@ export default () => ({
   },
   defaultChainId: parseInt(process.env.DEFAULT_CHAIN_ID!, 10) || 84532,
   oneShotRelayerUrl: process.env.ONESHOT_RELAYER_URL!,
+  oneShotPollIntervalMs: process.env.ONESHOT_POLL_INTERVAL_MS
+    ? parseInt(process.env.ONESHOT_POLL_INTERVAL_MS, 10)
+    : undefined,
+  oneShotPollTimeoutMs: process.env.ONESHOT_POLL_TIMEOUT_MS
+    ? parseInt(process.env.ONESHOT_POLL_TIMEOUT_MS, 10)
+    : undefined,
   venice: {
     apiBase: process.env.VENICE_API_BASE || 'https://api.venice.ai/api/v1',
     model: process.env.VENICE_MODEL || 'google/gemini-2.5-flash',
@@ -42,6 +47,5 @@ export default () => ({
   },
   ottoAiNewsUrl:
     process.env.OTTOAI_NEWS_URL || 'https://x402.ottoai.services/crypto-news',
-  proofDelegatorPrivateKey: process.env.PROOF_DELEGATOR_PRIVATE_KEY as `0x${string}` | undefined,
   runnerEnabled: process.env.RUNNER_ENABLED !== 'false',
 });

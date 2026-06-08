@@ -93,4 +93,4 @@ export interface SkillParameterInput {
   value: unknown;
 }
 
-export type SkillParameterInputPayload = SkillParameterInput[] | Record<string, unknown>;
+export type SkillParameterInputPayload = SkillParameterInput[];

@@ -36,6 +36,10 @@ describe('ExecutorService', () => {
     expect(service.getInfo().address).toBe(service.getAddress());
   });
 
+  it('does not leak the executor private key through getInfo', () => {
+    expect((service.getInfo() as Record<string, unknown>).privateKey).toBeUndefined();
+  });
+
   it('exposes the account object', () => {
     expect(service.getAccount().address).toBe(service.getAddress());
   });

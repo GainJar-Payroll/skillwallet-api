@@ -9,8 +9,8 @@ import {
 } from '../installations/schemas/installation.schema';
 import { SpendReservationsService } from '../spend-reservations/spend-reservations.service';
 import { SkillEventFilterValue } from '../skills/skill-config.types';
-import { normalizeSkillExecution, normalizeSkillTrigger } from '../skills/skill-config.util';
 import { SkillsService } from '../skills/skills.service';
+import { ProcessedEventService } from './processed-event.service';
 import { ExecuteInstallationContext, RunnerService } from './runner.service';
 
 export interface SkillEventPayload {
@@ -37,11 +37,12 @@ export class SkillEventHandlerService {
     private readonly installationsService: InstallationsService,
     private readonly runnerService: RunnerService,
     private readonly spendReservationsService: SpendReservationsService,
+    private readonly processedEventService: ProcessedEventService,
   ) {}
 
   async handleSkillEvent(payload: SkillEventPayload): Promise<SkillEventHandlingSummary> {
     const skill = await this.skillsService.findById(payload.skillId);
-    const trigger = normalizeSkillTrigger(skill);
+    const trigger = skill.trigger;
 
     if (!trigger || trigger.type !== 'event-trigger') {
       throw new Error(`Skill ${payload.skillId} is not event-triggered`);
@@ -49,7 +50,8 @@ export class SkillEventHandlerService {
 
     if (
       (trigger.chainId ?? skill.chainId) !== payload.chainId ||
-      this.normalizeString(trigger.contractAddress) !== this.normalizeString(payload.event.contractAddress) ||
+      this.normalizeString(trigger.contractAddress) !==
+        this.normalizeString(payload.event.contractAddress) ||
       trigger.eventSignature !== payload.event.eventSignature
     ) {
       throw new Error(`Event payload does not match trigger config for skill ${payload.skillId}`);
@@ -69,6 +71,11 @@ export class SkillEventHandlerService {
       matchedInstallations += 1;
 
       if (this.hasProcessedEvent(installation, payload.event)) {
+        dedupedInstallations += 1;
+        continue;
+      }
+
+      if (!(await this.claimEvent(payload.event))) {
         dedupedInstallations += 1;
         continue;
       }
@@ -128,6 +135,19 @@ export class SkillEventHandlerService {
     });
   }
 
+  private async claimEvent(event: ExecutionTriggerEventRecord): Promise<boolean> {
+    if (!event.txHash || event.logIndex === undefined) {
+      return true;
+    }
+
+    return this.processedEventService.tryMarkProcessed({
+      chainId: event.chainId,
+      contractAddress: event.contractAddress,
+      txHash: event.txHash,
+      logIndex: event.logIndex,
+    });
+  }
+
   private async buildExecutionContext(
     skillId: string,
     installation: Installation,
@@ -147,12 +167,6 @@ export class SkillEventHandlerService {
     installation: Installation,
     payload: SkillEventPayload,
   ): Promise<ExecuteInstallationContext['spend']> {
-    const execution = normalizeSkillExecution(await this.skillsService.findById(skillId));
-
-    if (execution?.kind !== 'dca-uniswap-v3') {
-      return undefined;
-    }
-
     const chainConfig = getChainConfig(installation.chainId);
     const inboundAmount = BigInt(String(payload.event.args?.value ?? '0'));
     const parameters = installation.parameters ?? {};
@@ -190,12 +204,16 @@ export class SkillEventHandlerService {
     };
   }
 
-  private hasProcessedEvent(installation: Installation, event: ExecutionTriggerEventRecord): boolean {
+  private hasProcessedEvent(
+    installation: Installation,
+    event: ExecutionTriggerEventRecord,
+  ): boolean {
     return (installation.executions ?? []).some((execution) => {
       const recordedEvent = execution.trigger?.event;
       return (
         recordedEvent?.chainId === event.chainId &&
-        this.normalizeString(recordedEvent.contractAddress) === this.normalizeString(event.contractAddress) &&
+        this.normalizeString(recordedEvent.contractAddress) ===
+          this.normalizeString(event.contractAddress) &&
         recordedEvent.txHash !== undefined &&
         event.txHash !== undefined &&
         this.normalizeString(recordedEvent.txHash) === this.normalizeString(event.txHash) &&

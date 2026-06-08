@@ -10,12 +10,14 @@ import type {
 export type NormalizedSkillParameters = Record<string, unknown>;
 
 export function validateSkillParameters(
-  definitions: SkillParameterDefinition[] | undefined,
-  input: SkillParameterInputPayload | undefined,
+  definitions: SkillParameterDefinition[],
+  input: SkillParameterInputPayload,
 ): NormalizedSkillParameters {
   const parameterDefinitions = definitions ?? [];
   const provided = normalizeParameterInput(input);
-  const definitionByKey = new Map(parameterDefinitions.map((definition) => [definition.key, definition]));
+  const definitionByKey = new Map(
+    parameterDefinitions.map((definition) => [definition.key, definition]),
+  );
 
   for (const key of Object.keys(provided)) {
     if (!definitionByKey.has(key)) {
@@ -53,7 +55,9 @@ export function normalizeParameterInput(
 
     for (const entry of input) {
       if (!isParameterInput(entry)) {
-        throw new BadRequestException('Skill parameters must be an array of { key, value } entries');
+        throw new BadRequestException(
+          'Skill parameters must be an array of { key, value } entries',
+        );
       }
 
       if (Object.prototype.hasOwnProperty.call(normalized, entry.key)) {
@@ -66,9 +70,9 @@ export function normalizeParameterInput(
     return normalized;
   }
 
-  if (typeof input === 'object') return { ...input };
-
-  throw new BadRequestException('Skill parameters must be an object or an array of { key, value } entries');
+  throw new BadRequestException(
+    'Skill parameters must be an object or an array of { key, value } entries',
+  );
 }
 
 function validateParameterValue(

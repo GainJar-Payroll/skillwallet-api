@@ -26,13 +26,41 @@ export interface OneShotStatus {
   logs?: unknown;
 }
 
+export interface OneShotPollOptions {
+  timeoutMs?: number;
+  intervalMs?: number;
+}
+
+const DEFAULT_POLL_INTERVAL_MS = 3_000;
+const DEFAULT_POLL_TIMEOUT_MS = 300_000;
+
 @Injectable()
 export class OneShotService {
   private readonly logger = new Logger(OneShotService.name);
   private readonly relayerUrl: string;
+  private readonly defaultPollIntervalMs: number;
+  private readonly defaultPollTimeoutMs: number;
 
   constructor(private readonly config: ConfigService) {
     this.relayerUrl = this.config.get<string>('oneShotRelayerUrl')!;
+    this.defaultPollIntervalMs = this.readPositiveInt(
+      this.config.get<string | number | undefined>('oneShotPollIntervalMs'),
+      DEFAULT_POLL_INTERVAL_MS,
+    );
+    this.defaultPollTimeoutMs = this.readPositiveInt(
+      this.config.get<string | number | undefined>('oneShotPollTimeoutMs'),
+      DEFAULT_POLL_TIMEOUT_MS,
+    );
+  }
+
+  private readPositiveInt(
+    value: string | number | undefined,
+    fallback: number,
+  ): number {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.floor(parsed);
   }
 
   async getCapabilities(chainId: number): Promise<Record<string, unknown>> {
@@ -70,27 +98,47 @@ export class OneShotService {
     );
   }
 
-  async poll(taskId: `0x${string}`, timeoutMs = 300_000): Promise<OneShotStatus> {
+  async poll(
+    taskId: `0x${string}`,
+    options: OneShotPollOptions = {},
+  ): Promise<OneShotStatus> {
+    const timeoutMs = options.timeoutMs ?? this.defaultPollTimeoutMs;
+    const intervalMs = options.intervalMs ?? this.defaultPollIntervalMs;
     const deadline = Date.now() + timeoutMs;
+
+    this.logger.log(
+      `1Shot poll started taskId=${taskId} timeoutMs=${timeoutMs} intervalMs=${intervalMs}`,
+    );
 
     while (Date.now() < deadline) {
       const status = await this.getStatus(taskId);
 
-      this.logger.log(
+      this.logger.debug(
         `1Shot status=${status.status} hash=${status.hash ?? '-'} message=${status.message ?? '-'}`,
       );
 
-      if (status.status === 200) return status;
+      if (status.status === 200) {
+        this.logger.log(
+          `1Shot poll terminal status=200 taskId=${taskId} hash=${status.hash ?? '-'}`,
+        );
+        return status;
+      }
 
       if (status.status === 400) {
+        this.logger.warn(
+          `1Shot poll rejected status=400 taskId=${taskId} message=${status.message ?? '-'}`,
+        );
         throw new Error(`1Shot task rejected: ${JSON.stringify(status)}`);
       }
 
       if (status.status === 500) {
+        this.logger.error(
+          `1Shot poll reverted status=500 taskId=${taskId} message=${status.message ?? '-'}`,
+        );
         throw new Error(`1Shot task reverted: ${JSON.stringify(status)}`);
       }
 
-      await new Promise((r) => setTimeout(r, 3_000));
+      await new Promise((r) => setTimeout(r, intervalMs));
     }
 
     throw new Error(`1Shot task ${taskId} timed out after ${timeoutMs}ms`);

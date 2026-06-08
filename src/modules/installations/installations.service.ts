@@ -7,13 +7,31 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, PopulateOptions, Types } from 'mongoose';
-import { getAddress } from 'viem';
+import { Address, getAddress } from 'viem';
 import { Installation, InstallationDocument, ExecutionRecord } from './schemas/installation.schema';
 import { SkillsService } from '../skills/skills.service';
 import { DelegationService } from '../delegation/delegation.service';
 import { PrepareInstallationDto } from './dto/prepare-installation.dto';
 import { ConfirmInstallationDto } from './dto/confirm-installation.dto';
 import { validateSkillParameters } from '../skills/skill-parameter-validation';
+import { getExplorerTxUrl } from '../../config/chains.config';
+
+export interface ExecutionProof {
+  executionId: string | undefined;
+  status: ExecutionRecord['status'];
+  oneShotTaskId: string | undefined;
+  txHash: string | undefined;
+  explorerUrl: string | undefined;
+  executedAt: Date;
+  completedAt: Date | undefined;
+}
+
+export interface InstallationExecutionsResponse {
+  installationId: string;
+  chainId: number;
+  latest: ExecutionProof | null;
+  data: ExecutionRecord[];
+}
 
 export interface PrepareInstallationResponse {
   delegation: Record<string, unknown>;
@@ -30,6 +48,7 @@ export interface FindInstallationsOptions {
 
 @Injectable()
 export class InstallationsService {
+  //
   private readonly skillPopulate: PopulateOptions = {
     path: 'skillId',
     model: 'Skill',
@@ -53,12 +72,9 @@ export class InstallationsService {
       throw new BadRequestException('Skill is not active');
     }
 
-    const userAddress = getAddress(dto.userAddress) as `0x${string}`;
-    const smartAccountAddress = getAddress(dto.smartAccountAddress) as `0x${string}`;
-
     await this.assertNoActiveDuplicate({
-      userAddress,
-      smartAccountAddress,
+      userAddress: dto.userAddress,
+      smartAccountAddress: dto.smartAccountAddress,
       skillId: skill.skillId,
     });
 
@@ -68,7 +84,7 @@ export class InstallationsService {
 
     const delegation = (await this.delegationService.prepare(
       skill,
-      smartAccountAddress,
+      dto.smartAccountAddress,
       salt,
     )) as unknown as Record<string, unknown>;
 
@@ -76,7 +92,7 @@ export class InstallationsService {
       delegation,
       salt,
       skillId: skill.skillId,
-      executorAddress: delegation.delegate as `0x${string}`,
+      executorAddress: delegation.delegate as Address,
       chainId: skill.chainId,
     };
   }
@@ -152,7 +168,10 @@ export class InstallationsService {
     return created.toObject();
   }
 
-  async findByUser(userAddress: string, options: FindInstallationsOptions = {}): Promise<Installation[]> {
+  async findByUser(
+    userAddress: string,
+    options: FindInstallationsOptions = {},
+  ): Promise<Installation[]> {
     const checksummed = getAddress(userAddress);
 
     if (options.chainId !== undefined && !Number.isInteger(options.chainId)) {
@@ -175,11 +194,7 @@ export class InstallationsService {
       filter.smartAccountAddress = getAddress(options.smartAccountAddress);
     }
 
-    return this.installationModel
-      .find(filter)
-      .populate(this.skillPopulate)
-      .lean()
-      .exec();
+    return this.installationModel.find(filter).populate(this.skillPopulate).lean().exec();
   }
 
   async findById(id: string): Promise<Installation> {
@@ -227,12 +242,33 @@ export class InstallationsService {
     await doc.save();
   }
 
-  async findExecutions(id: string): Promise<ExecutionRecord[]> {
+  async findExecutions(id: string): Promise<InstallationExecutionsResponse> {
     const doc = await this.installationModel.findById(id).lean().exec();
 
     if (!doc) throw new NotFoundException('Installation not found');
 
-    return doc.executions ?? [];
+    const executions = doc.executions ?? [];
+    const latestRecord = executions[0];
+
+    return {
+      installationId: id,
+      chainId: doc.chainId,
+      latest: latestRecord
+        ? {
+            executionId: latestRecord.executionId,
+            status: latestRecord.status,
+            oneShotTaskId: latestRecord.oneShotTaskId,
+            txHash: latestRecord.txHash,
+            explorerUrl: getExplorerTxUrl(doc.chainId, latestRecord.txHash),
+            executedAt: latestRecord.executedAt,
+            completedAt: latestRecord.completedAt,
+          }
+        : null,
+      data: executions.map((execution) => ({
+        ...execution,
+        explorerUrl: getExplorerTxUrl(doc.chainId, execution.txHash),
+      })),
+    };
   }
 
   async updateLastExecution(id: string, patch: Partial<ExecutionRecord>): Promise<void> {

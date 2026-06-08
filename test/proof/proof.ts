@@ -65,7 +65,7 @@ const PORT = Number(process.env.PORT ?? '3000');
 const API_BASE_URL = `http://localhost:${PORT}`;
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
-const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL;
+const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL!;
 const DEFAULT_CHAIN_ID = Number(process.env.DEFAULT_CHAIN_ID ?? '84532');
 const PROOF_PRIVATE_KEY = process.env.PROOF_PRIVATE_KEY! as Hex;
 
@@ -877,7 +877,6 @@ async function main() {
 
   step('4a. Client-side validate chosen parameters against skill.parameters');
 
-  const dcaConfig = buildDcaConfig(smartAccountAddress, selectedSkill);
   const dcaParameters = [
     { key: 'outputToken', value: 'weth' },
     { key: 'amountUsdc', value: AMOUNT_IN_USDC_ATOMS },
@@ -937,116 +936,115 @@ async function main() {
   if (existing) {
     installationId = getInstallationId(existing);
     if (!installationId) {
-      throw new Error(
-        `Existing installation has no id: ${stringify(existing)}`,
-      );
+      throw new Error(`Existing installation has no id: ${stringify(existing)}`);
     }
     log('SKIPPING_PREPARE_CONFIRM_INSTALLATION_ALREADY_PRESENT', {
       skillId,
       installationId,
       status: existing.status,
     });
-  } else try {
-    const prepared = await requestJson<PrepareResponse>('/installations/prepare', {
-      method: 'POST',
-      body: JSON.stringify(prepareInput),
-    });
-
-    log('PREPARE_DONE', {
-      input: prepareInput,
-      prepared,
-      detectedShape: prepared.delegation
-        ? 'prepared.delegation'
-        : prepared.delegate && prepared.delegationScope
-          ? 'prepared.delegate + prepared.delegationScope'
-          : 'unknown',
-    });
-
-    if (prepared.executorAddress && adminExecutor?.address) {
-      const preparedExecutor = getAddress(prepared.executorAddress);
-      const adminExecutorAddress = getAddress(adminExecutor.address);
-
-      if (preparedExecutor !== adminExecutorAddress) {
-        log('EXECUTOR_ADDRESS_MISMATCH_WARNING', {
-          preparedExecutor,
-          adminExecutorAddress,
-          note: 'If this is unexpected, backend may have restarted with a different EXECUTOR_PRIVATE_KEY.',
-        });
-      }
-    }
-
-    step('6. Build and sign delegation');
-
-    const { source, delegation } = buildDelegationToSign({
-      prepared,
-      smartAccount,
-      smartAccountAddress,
-      oneShotTargetAddress,
-    });
-
-    log('DELEGATION_TO_SIGN', { source, delegation });
-
-    let delegationSignature: Hex;
-
+  } else
     try {
-      delegationSignature = await smartAccount.signDelegation({
-        delegation: delegation as any,
+      const prepared = await requestJson<PrepareResponse>('/installations/prepare', {
+        method: 'POST',
+        body: JSON.stringify(prepareInput),
       });
 
-      log('DELEGATION_SIGNATURE_OK', {
-        signature: delegationSignature,
-        signaturePrefix: `${delegationSignature.slice(0, 22)}…`,
+      log('PREPARE_DONE', {
+        input: prepareInput,
+        prepared,
+        detectedShape: prepared.delegation
+          ? 'prepared.delegation'
+          : prepared.delegate && prepared.delegationScope
+            ? 'prepared.delegate + prepared.delegationScope'
+            : 'unknown',
       });
+
+      if (prepared.executorAddress && adminExecutor?.address) {
+        const preparedExecutor = getAddress(prepared.executorAddress);
+        const adminExecutorAddress = getAddress(adminExecutor.address);
+
+        if (preparedExecutor !== adminExecutorAddress) {
+          log('EXECUTOR_ADDRESS_MISMATCH_WARNING', {
+            preparedExecutor,
+            adminExecutorAddress,
+            note: 'If this is unexpected, backend may have restarted with a different EXECUTOR_PRIVATE_KEY.',
+          });
+        }
+      }
+
+      step('6. Build and sign delegation');
+
+      const { source, delegation } = buildDelegationToSign({
+        prepared,
+        smartAccount,
+        smartAccountAddress,
+        oneShotTargetAddress,
+      });
+
+      log('DELEGATION_TO_SIGN', { source, delegation });
+
+      let delegationSignature: Hex;
+
+      try {
+        delegationSignature = await smartAccount.signDelegation({
+          delegation: delegation as any,
+        });
+
+        log('DELEGATION_SIGNATURE_OK', {
+          signature: delegationSignature,
+          signaturePrefix: `${delegationSignature.slice(0, 22)}…`,
+        });
+      } catch (err) {
+        log('DELEGATION_SIGNATURE_FAILED', errorDetails(err));
+        throw err;
+      }
+
+      const signedDelegation = normalizeSignedDelegation(delegation, delegationSignature);
+
+      log('SIGNED_DELEGATION_NORMALIZED', signedDelegation);
+
+      step('7. POST /installations/confirm');
+
+      const delegationSalt = prepared.salt ?? prepared.delegation?.salt;
+
+      if (!delegationSalt) {
+        throw new Error(`prepare did not return salt/delegation.salt: ${stringify(prepared)}`);
+      }
+
+      const confirmInput = {
+        userAddress: owner,
+        smartAccountAddress,
+        chainId: DEFAULT_CHAIN_ID,
+        skillId,
+        signedDelegation,
+        delegationSalt,
+        parameters: dcaParameters,
+      };
+
+      const confirmed = await requestJson<InstallationResponse>('/installations/confirm', {
+        method: 'POST',
+        body: JSON.stringify(confirmInput),
+      });
+
+      installationId = getInstallationId(confirmed);
+
+      log('CONFIRM_DONE', {
+        confirmInput,
+        confirmed,
+        installationId,
+      });
+
+      if (!installationId) {
+        throw new Error(`confirm did not return installation id: ${stringify(confirmed)}`);
+      }
     } catch (err) {
-      log('DELEGATION_SIGNATURE_FAILED', errorDetails(err));
-      throw err;
+      const existingInstallationId = getAlreadyInstalledId(err);
+      if (!existingInstallationId) throw err;
+
+      installationId = existingInstallationId;
+      log('INSTALLATION_ALREADY_EXISTS_REUSED', { installationId, error: errorDetails(err) });
     }
-
-    const signedDelegation = normalizeSignedDelegation(delegation, delegationSignature);
-
-    log('SIGNED_DELEGATION_NORMALIZED', signedDelegation);
-
-    step('7. POST /installations/confirm');
-
-    const delegationSalt = prepared.salt ?? prepared.delegation?.salt;
-
-    if (!delegationSalt) {
-      throw new Error(`prepare did not return salt/delegation.salt: ${stringify(prepared)}`);
-    }
-
-    const confirmInput = {
-      userAddress: owner,
-      smartAccountAddress,
-      chainId: DEFAULT_CHAIN_ID,
-      skillId,
-      signedDelegation,
-      delegationSalt,
-      parameters: dcaParameters,
-    };
-
-    const confirmed = await requestJson<InstallationResponse>('/installations/confirm', {
-      method: 'POST',
-      body: JSON.stringify(confirmInput),
-    });
-
-    installationId = getInstallationId(confirmed);
-
-    log('CONFIRM_DONE', {
-      confirmInput,
-      confirmed,
-      installationId,
-    });
-
-    if (!installationId) {
-      throw new Error(`confirm did not return installation id: ${stringify(confirmed)}`);
-    }
-  } catch (err) {
-    const existingInstallationId = getAlreadyInstalledId(err);
-    if (!existingInstallationId) throw err;
-
-    installationId = existingInstallationId;
-    log('INSTALLATION_ALREADY_EXISTS_REUSED', { installationId, error: errorDetails(err) });
-  }
 
   step('8. GET /installations/:id before trigger');
 

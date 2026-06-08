@@ -21,7 +21,6 @@ export class AppController {
           properties: {
             docs: { type: 'string', example: '/docs' },
             health: { type: 'string', example: '/health' },
-            proof: { type: 'string', example: '/proof' },
             skills: { type: 'string', example: '/skills' },
             installations: { type: 'string', example: '/installations' },
             executor: { type: 'string', example: '/executor/address' },
@@ -38,7 +37,6 @@ export class AppController {
       endpoints: {
         docs: '/docs',
         health: '/health',
-        proof: '/proof',
         skills: '/skills',
         installations: '/installations',
         executor: '/executor/address',

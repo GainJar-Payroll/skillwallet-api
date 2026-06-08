@@ -1,13 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsInt,
-  IsNotEmpty,
-  IsObject,
-  IsOptional,
-  IsString,
-  Matches,
-} from 'class-validator';
+import { IsEthereumAddress, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 import type { SkillParameterInputPayload } from '../../skills/skill-parameter.types';
+import { IsEvmAddress } from 'src/common/validator/is-evm-address';
 
 export class PrepareInstallationDto {
   @ApiProperty({
@@ -22,38 +16,21 @@ export class PrepareInstallationDto {
     description: 'EOA address of the user installing the skill',
     example: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
   })
-  @IsString()
+  @IsEvmAddress()
   @Matches(/^0x[a-fA-F0-9]{40}$/, {
     message: 'userAddress must be a valid 0x address',
   })
-  userAddress!: string;
+  userAddress!: `0x${string}`;
 
   @ApiProperty({
     description: 'MetaMask Hybrid Smart Account address. This is the real delegation delegator.',
     example: '0x1234567890123456789012345678901234567890',
   })
-  @IsString()
+  @IsEvmAddress()
   @Matches(/^0x[a-fA-F0-9]{40}$/, {
     message: 'smartAccountAddress must be a valid 0x address',
   })
-  smartAccountAddress!: string;
-
-  @ApiPropertyOptional({
-    description: 'Expected chain id. If provided, it must match the selected skill chainId.',
-    example: 84532,
-  })
-  @IsOptional()
-  @IsInt()
-  chainId?: number;
-
-  @ApiPropertyOptional({
-    description: 'Skill parameters/config used by frontend proof flow',
-    type: 'object',
-    additionalProperties: true,
-  })
-  @IsOptional()
-  @IsObject()
-  config?: Record<string, unknown>;
+  smartAccountAddress!: `0x${string}`;
 
   @ApiPropertyOptional({
     description: 'Skill parameters used to scope the delegation',
@@ -61,5 +38,5 @@ export class PrepareInstallationDto {
     additionalProperties: true,
   })
   @IsOptional()
-  parameters?: SkillParameterInputPayload;
+  parameters!: SkillParameterInputPayload;
 }

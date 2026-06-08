@@ -12,7 +12,6 @@ import { RunnerModule } from './modules/runner/runner.module';
 import { OneShotModule } from './modules/oneshot/oneshot.module';
 import { X402Module } from './modules/x402/x402.module';
 import { VeniceModule } from './modules/venice/venice.module';
-import { ProofModule } from './modules/proof/proof.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AppController } from './app.controller';
 
@@ -41,7 +40,6 @@ import { AppController } from './app.controller';
     DelegationModule,
     InstallationsModule,
     RunnerModule,
-    ProofModule,
     AdminModule,
   ],
   controllers: [AppController],
