@@ -14,6 +14,7 @@ import { X402Module } from './modules/x402/x402.module';
 import { VeniceModule } from './modules/venice/venice.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AppController } from './app.controller';
+import { SponsorModule } from './modules/sponsor/sponsor.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AppController } from './app.controller';
     InstallationsModule,
     RunnerModule,
     AdminModule,
+    SponsorModule,
   ],
   controllers: [AppController],
 })

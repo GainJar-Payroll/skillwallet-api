@@ -3,15 +3,15 @@ import { getAddress } from 'viem';
 import { getChainConfig } from '../../config/chains.config';
 import { InstallationsService } from '../installations/installations.service';
 import {
-  ExecutionTriggerEventRecord,
-  ExecutionTriggerType,
-  Installation,
+  type ExecutionTriggerEventRecord,
+  type ExecutionTriggerType,
+  type Installation,
 } from '../installations/schemas/installation.schema';
 import { SpendReservationsService } from '../spend-reservations/spend-reservations.service';
-import { SkillEventFilterValue } from '../skills/skill-config.types';
+import type { SkillEventFilterValue } from '../skills/skill-config.types';
 import { SkillsService } from '../skills/skills.service';
 import { ProcessedEventService } from './processed-event.service';
-import { ExecuteInstallationContext, RunnerService } from './runner.service';
+import { type ExecutionContext, RunnerService } from './runner.service';
 
 export interface SkillEventPayload {
   skillId: string;
@@ -48,69 +48,71 @@ export class SkillEventHandlerService {
       throw new Error(`Skill ${payload.skillId} is not event-triggered`);
     }
 
+    const triggerChainId = trigger.chainId ?? skill.chainId;
     if (
-      (trigger.chainId ?? skill.chainId) !== payload.chainId ||
-      this.normalizeString(trigger.contractAddress) !==
-        this.normalizeString(payload.event.contractAddress) ||
+      triggerChainId !== payload.chainId ||
+      this.normalizeAddress(trigger.contractAddress) !==
+        this.normalizeAddress(payload.event.contractAddress) ||
       trigger.eventSignature !== payload.event.eventSignature
     ) {
       throw new Error(`Event payload does not match trigger config for skill ${payload.skillId}`);
     }
 
     const installations = await this.installationsService.findActiveBySkillId(skill.skillId);
-    let matchedInstallations = 0;
-    let executedInstallations = 0;
-    let skippedInstallations = 0;
-    let dedupedInstallations = 0;
+
+    let matched = 0,
+      executed = 0,
+      skipped = 0,
+      deduped = 0;
 
     for (const installation of installations) {
       if (!this.matchesDynamicFilters(trigger.filterArgs, installation, payload.event.args ?? {})) {
         continue;
       }
+      matched++;
 
-      matchedInstallations += 1;
-
-      if (this.hasProcessedEvent(installation, payload.event)) {
-        dedupedInstallations += 1;
+      if (this.isDuplicateEvent(installation, payload.event)) {
+        deduped++;
         continue;
       }
 
       if (!(await this.claimEvent(payload.event))) {
-        dedupedInstallations += 1;
+        deduped++;
         continue;
       }
 
-      const context = await this.buildExecutionContext(skill.skillId, installation, payload);
+      const ctx = await this.buildExecutionContext(skill.skillId, installation, payload);
+      const installationId = this.getInstallationId(installation);
 
-      if (context.spend?.actualAmount === '0') {
-        skippedInstallations += 1;
-        await this.installationsService.appendExecution(this.getInstallationId(installation), {
+      if (ctx.spend?.actualAmount === '0') {
+        skipped++;
+        await this.installationsService.appendExecution(installationId, {
           executedAt: new Date(),
           completedAt: new Date(),
           status: 'skipped',
-          trigger: context.trigger,
-          spend: context.spend,
-          skippedReason: context.spend.skippedReason,
+          trigger: ctx.trigger,
+          spend: ctx.spend,
+          skippedReason: ctx.spend.skippedReason,
         });
         continue;
       }
 
       try {
-        await this.runnerService.executeInstallation(this.getInstallationId(installation), context);
-        executedInstallations += 1;
+        await this.runnerService.executeInstallation(installationId, ctx);
+        executed++;
       } catch (err) {
         this.logger.error(
-          `Event-triggered execution failed for installation ${this.getInstallationId(installation)}: ${(err as Error).message}`,
+          `Event-triggered execution failed installation=${installationId}: ${(err as Error).message}`,
         );
       }
     }
 
     return {
       skillId: skill.skillId,
-      matchedInstallations,
-      executedInstallations,
-      skippedInstallations,
-      dedupedInstallations,
+      matchedInstallations: matched,
+      executedInstallations: executed,
+      skippedInstallations: skipped,
+      dedupedInstallations: deduped,
     };
   }
 
@@ -119,26 +121,22 @@ export class SkillEventHandlerService {
     installation: Installation,
     eventArgs: Record<string, unknown>,
   ): boolean {
-    if (!filterArgs) {
-      return true;
-    }
+    if (!filterArgs) return true;
 
     return Object.entries(filterArgs).every(([argName, filterValue]) => {
-      const actualValue = eventArgs[argName];
-      const expectedValue = this.resolveFilterValue(filterValue, installation);
-
-      if (actualValue === undefined || expectedValue === undefined) {
-        return false;
-      }
-
-      return this.normalizeComparable(actualValue) === this.normalizeComparable(expectedValue);
+      const actual = eventArgs[argName];
+      const expected = this.resolveFilterValue(filterValue, installation);
+      if (actual === undefined || expected === undefined) return false;
+      return this.normalizeComparable(actual) === this.normalizeComparable(expected);
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Private
+  // ---------------------------------------------------------------------------
+
   private async claimEvent(event: ExecutionTriggerEventRecord): Promise<boolean> {
-    if (!event.txHash || event.logIndex === undefined) {
-      return true;
-    }
+    if (!event.txHash || event.logIndex === undefined) return true;
 
     return this.processedEventService.tryMarkProcessed({
       chainId: event.chainId,
@@ -152,28 +150,26 @@ export class SkillEventHandlerService {
     skillId: string,
     installation: Installation,
     payload: SkillEventPayload,
-  ): Promise<ExecuteInstallationContext> {
+  ): Promise<ExecutionContext> {
     return {
-      trigger: {
-        type: payload.triggerType,
-        event: this.serializeEvent(payload.event),
-      },
+      trigger: { type: payload.triggerType, event: this.serializeEvent(payload.event) },
       spend: await this.buildSpendContext(skillId, installation, payload),
     };
   }
 
   private async buildSpendContext(
-    skillId: string,
+    _skillId: string,
     installation: Installation,
     payload: SkillEventPayload,
-  ): Promise<ExecuteInstallationContext['spend']> {
+  ): Promise<ExecutionContext['spend']> {
     const chainConfig = getChainConfig(installation.chainId);
+    const params = installation.parameters ?? {};
+
     const inboundAmount = BigInt(String(payload.event.args?.value ?? '0'));
-    const parameters = installation.parameters ?? {};
-    const spendMode = String(parameters['spendMode'] ?? 'fixed');
-    const amountPerRun = BigInt(String(parameters['amountPerRun'] ?? '100000'));
-    const percentOfInboundBps = BigInt(String(parameters['percentOfInboundBps'] ?? '5000'));
-    const dailySpendLimit = BigInt(String(parameters['dailySpendLimit'] ?? '10000000'));
+    const spendMode = String(params['spendMode'] ?? 'fixed');
+    const amountPerRun = BigInt(String(params['amountPerRun'] ?? '100000'));
+    const percentOfInboundBps = BigInt(String(params['percentOfInboundBps'] ?? '5000'));
+    const dailySpendLimit = BigInt(String(params['dailySpendLimit'] ?? '10000000'));
 
     const desiredAmount =
       spendMode === 'percent-of-inbound'
@@ -204,20 +200,20 @@ export class SkillEventHandlerService {
     };
   }
 
-  private hasProcessedEvent(
+  private isDuplicateEvent(
     installation: Installation,
     event: ExecutionTriggerEventRecord,
   ): boolean {
-    return (installation.executions ?? []).some((execution) => {
-      const recordedEvent = execution.trigger?.event;
+    return (installation.executions ?? []).some((record) => {
+      const recorded = record.trigger?.event;
       return (
-        recordedEvent?.chainId === event.chainId &&
-        this.normalizeString(recordedEvent.contractAddress) ===
-          this.normalizeString(event.contractAddress) &&
-        recordedEvent.txHash !== undefined &&
+        recorded?.chainId === event.chainId &&
+        this.normalizeAddress(recorded.contractAddress) ===
+          this.normalizeAddress(event.contractAddress) &&
+        recorded.txHash !== undefined &&
         event.txHash !== undefined &&
-        this.normalizeString(recordedEvent.txHash) === this.normalizeString(event.txHash) &&
-        recordedEvent.logIndex === event.logIndex
+        recorded.txHash.toLowerCase() === event.txHash.toLowerCase() &&
+        recorded.logIndex === event.logIndex
       );
     });
   }
@@ -226,30 +222,18 @@ export class SkillEventHandlerService {
     filterValue: SkillEventFilterValue,
     installation: Installation,
   ): unknown {
-    if (typeof filterValue === 'string') {
-      return filterValue;
-    }
-
-    if (filterValue.source === 'installation') {
-      return installation[filterValue.path];
-    }
-
+    if (typeof filterValue === 'string') return filterValue;
+    if (filterValue.source === 'installation') return installation[filterValue.path];
     return installation.parameters?.[filterValue.path];
   }
 
   private normalizeComparable(value: unknown): string {
-    if (typeof value === 'bigint') {
-      return value.toString();
-    }
-
-    if (typeof value === 'string') {
-      return this.normalizeString(value);
-    }
-
+    if (typeof value === 'bigint') return value.toString();
+    if (typeof value === 'string') return this.normalizeAddress(value);
     return JSON.stringify(value);
   }
 
-  private normalizeString(value: string): string {
+  private normalizeAddress(value: string): string {
     try {
       return getAddress(value).toLowerCase();
     } catch {
@@ -261,15 +245,15 @@ export class SkillEventHandlerService {
     return {
       ...event,
       args: Object.fromEntries(
-        Object.entries(event.args ?? {}).map(([key, value]) => [
-          key,
-          typeof value === 'bigint' ? value.toString() : value,
+        Object.entries(event.args ?? {}).map(([k, v]) => [
+          k,
+          typeof v === 'bigint' ? v.toString() : v,
         ]),
       ),
     };
   }
 
   private getInstallationId(installation: Installation): string {
-    return String((installation as Installation & { _id?: unknown })._id);
+    return String((installation as Installation & { _id: unknown })._id);
   }
 }

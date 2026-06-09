@@ -11,7 +11,6 @@ import {
 import { ApiOkResponse, ApiOperation, ApiParam, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AdminApiKeyGuard } from '../../common/guards/admin-api-key.guard';
-import { ExecutorService } from '../executor/executor.service';
 import { SkillsService } from '../skills/skills.service';
 import { SkillEventHandlerService } from '../runner/skill-event-handler.service';
 import { RunnerService } from '../runner/runner.service';
@@ -202,28 +201,10 @@ export class AdminController {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly executorService: ExecutorService,
     private readonly skillsService: SkillsService,
     private readonly skillEventHandlerService: SkillEventHandlerService,
     private readonly runnerService: RunnerService,
   ) {}
-
-  @Get('executor')
-  @ApiOperation({ summary: 'Admin view of the executor account' })
-  @ApiOkResponse({
-    description: 'Executor EVM address and configured default chain id',
-    schema: {
-      type: 'object',
-      properties: {
-        address: { type: 'string', example: '0x90F79bf6EB2c4f870365E785982E1f101E93b906' },
-      },
-    },
-  })
-  async executor() {
-    return {
-      address: this.executorService.getAddress(),
-    };
-  }
 
   @Post('skills/seed')
   @ApiOperation({
