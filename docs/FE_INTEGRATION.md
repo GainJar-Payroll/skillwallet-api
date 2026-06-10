@@ -1,6 +1,6 @@
-# Skill-Wallet API Integration Guide (Frontend)
+# MBG API Integration Guide (Frontend)
 
-This document is the single source of truth for FE integration with Skill-Wallet.
+This document is the single source of truth for FE integration with MBG.
 It covers the full install flow: skill discovery, parameter rendering, prepare, sign, confirm, history, and operational endpoints.
 
 Base URL:
