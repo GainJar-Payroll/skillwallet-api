@@ -35,7 +35,7 @@ async function bootstrap(): Promise<void> {
     origin: parseCorsOrigins(),
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'X-402-Payment'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-pimlico-key', 'X-402-Payment'],
     exposedHeaders: ['PAYMENT-REQUIRED'],
     maxAge: 86400,
   });
@@ -56,7 +56,12 @@ async function bootstrap(): Promise<void> {
     .addTag('Executor', 'Executor EVM account read APIs')
     .addTag('Skills', 'Skill catalog and admin CRUD')
     .addTag('Installations', 'Prepare, sign, confirm, and manage user skill installations')
+    .addApiKey(
+      { type: 'apiKey', name: 'x-pimlico-key', in: 'header' },
+      'pimlico-api-key',
+    )
     .addTag('Admin', 'Admin-only operations (seed skills, trigger executions)')
+    .addTag('Pimlico', 'Pimlico ERC-4337 bundler + ERC-7677 paymaster endpoints')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

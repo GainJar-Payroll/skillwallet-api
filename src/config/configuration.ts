@@ -27,6 +27,10 @@ export const validationSchema = Joi.object({
   STATELESS_DELEGATOR_IMPL_ADDRESS: Joi.string()
     .pattern(/^0x[0-9a-fA-F]{40}$/)
     .optional(),
+  PAYMASTER_URL: Joi.string().uri().optional(),
+  BUNDLER_URL: Joi.string().uri().optional(),
+  SPONSORSHIP_POLICY: Joi.string().optional(),
+  PIMLICO_EXEC_KEY: Joi.string().min(8).optional(),
 });
 
 export default () => ({
@@ -64,4 +68,10 @@ export default () => ({
   ottoAiNewsUrl: process.env.OTTOAI_NEWS_URL || 'https://x402.ottoai.services/crypto-news',
   runnerEnabled: process.env.RUNNER_ENABLED !== 'false',
   cronInterval: process.env.CRON_INTERVAL ?? '*/5 * * * *',
+  pimlico: {
+    paymasterUrl: process.env.PAYMASTER_URL || '',
+    bundlerUrl: process.env.BUNDLER_URL || process.env.PAYMASTER_URL || '',
+    sponsorshipPolicy: process.env.SPONSORSHIP_POLICY || '',
+    execKey: process.env.PIMLICO_EXEC_KEY || '',
+  },
 });

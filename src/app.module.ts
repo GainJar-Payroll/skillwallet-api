@@ -15,6 +15,7 @@ import { VeniceModule } from './modules/venice/venice.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AppController } from './app.controller';
 import { SponsorModule } from './modules/sponsor/sponsor.module';
+import { PimlicoModule } from './modules/pimlico/pimlico.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { SponsorModule } from './modules/sponsor/sponsor.module';
     RunnerModule,
     AdminModule,
     SponsorModule,
+    PimlicoModule,
   ],
   controllers: [AppController],
 })

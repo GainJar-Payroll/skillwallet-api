@@ -9,10 +9,7 @@ import { X402Service } from '../x402/x402.service';
 import { VeniceService } from '../venice/venice.service';
 import { Installation, ExecutionRecord } from '../installations/schemas/installation.schema';
 import { Skill } from '../skills/schemas/skill.schema';
-import {
-  X402ServiceConfig,
-  AISkillConfig,
-} from '../skills/skill-config.types';
+import { AISkillConfig, type CronSkillTriggerConfig } from '../skills/skill-config.types';
 
 type WithId<T> = T & { _id: { toString(): string } };
 
@@ -60,7 +57,9 @@ export class CronRunnerService {
                 context[svc.output] = result;
               }
             } catch (err) {
-              this.logger.warn(`x402 fetch "${svc.key}" failed (${svc.endpoint}): ${(err as Error).message}`);
+              this.logger.warn(
+                `x402 fetch "${svc.key}" failed (${svc.endpoint}): ${(err as Error).message}`,
+              );
               if (svc.required) throw err;
             }
           }
@@ -102,8 +101,9 @@ export class CronRunnerService {
 
         // Resolve cron expression: user's cronSchedule param > skill default
         const cronExpr =
-          (inst.parameters as Record<string, unknown>)?.cronSchedule as string | undefined ??
-          skill.trigger.cronExpression;
+          ((inst.parameters as Record<string, unknown>)?.cronSchedule as string | undefined) ??
+          // default value
+          (skill.trigger as CronSkillTriggerConfig).cronExpression;
 
         const parser = parseExpression(cronExpr, { currentDate: new Date() });
         const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes, matches CRON_INTERVAL default
@@ -112,10 +112,7 @@ export class CronRunnerService {
         while (nextDate < minNext && parser.hasNext()) {
           nextDate = parser.next().toDate();
         }
-        await this.installationsService.updateNextExecution(
-          inst._id.toString(),
-          nextDate,
-        );
+        await this.installationsService.updateNextExecution(inst._id.toString(), nextDate);
       } catch (err) {
         this.logger.error(
           `Execution failed for installation ${inst._id.toString()}: ${(err as Error).message}`,
@@ -145,8 +142,9 @@ export class CronRunnerService {
     if (aiConfig.inputSources.includeHistory && history.length > 0) {
       const recentHistory = history
         .slice(0, 5)
-        .map((h) =>
-          `- ${h.executedAt!.toISOString()}: ${h.status}${h.skippedReason ? ` (skipped: ${h.skippedReason})` : ''}`,
+        .map(
+          (h) =>
+            `- ${h.executedAt!.toISOString()}: ${h.status}${h.skippedReason ? ` (skipped: ${h.skippedReason})` : ''}`,
         )
         .join('\n');
       prompt = prompt.replace('{{history}}', recentHistory);
