@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createBundlerClient, createPaymasterClient } from 'viem/account-abstraction';
+import { http, createPublicClient, type Hex, toHex } from 'viem';
+import { baseSepolia } from 'viem/chains';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -85,11 +88,27 @@ export class PimlicoService {
   private readonly paymasterUrl: string;
   private readonly bundlerUrl: string;
   private readonly sponsorshipPolicy: string;
+  private bundlerClient: ReturnType<typeof createBundlerClient>;
+  private paymasterClient: ReturnType<typeof createPaymasterClient>;
 
   constructor(private readonly config: ConfigService) {
     this.paymasterUrl = this.config.get<string>('pimlico.paymasterUrl')!;
     this.bundlerUrl = this.config.get<string>('pimlico.bundlerUrl')!;
     this.sponsorshipPolicy = this.config.get<string>('pimlico.sponsorshipPolicy') ?? '';
+
+    const publicClient = createPublicClient({
+      chain: baseSepolia,
+      transport: http('https://sepolia.base.org'),
+    });
+
+    this.bundlerClient = createBundlerClient({
+      client: publicClient,
+      transport: http(this.bundlerUrl),
+    });
+
+    this.paymasterClient = createPaymasterClient({
+      transport: http(this.paymasterUrl || this.bundlerUrl),
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -212,66 +231,164 @@ export class PimlicoService {
     callGasLimit: string;
     verificationGasLimit: string;
     preVerificationGas: string;
+    maxFeePerGas?: string;
+    maxPriorityFeePerGas?: string;
     paymaster: `0x${string}` | null;
     paymasterData: `0x${string}` | null;
     paymasterVerificationGasLimit: string;
     paymasterPostOpGasLimit: string;
   }> {
     const entryPoint = params.entryPoint ?? ENTRY_POINT_V07;
+    const chainId = 84532; // baseSepolia
 
     // Split initCode into factory (20 bytes) + factoryData (rest) for v0.7
     const factory = params.initCode.slice(0, 42) as `0x${string}`;
     const factoryData = ('0x' + params.initCode.slice(42)) as `0x${string}`;
-    const baseUserOp: Partial<PimlicoUserOperation> = {
+
+    // Default dummy values for estimation phase
+    const defaultUserOp = {
       sender: params.sender,
+      nonce: 0n,
       factory,
       factoryData,
       callData: params.callData,
-      nonce: '0x0',
-      maxFeePerGas: '0x0',
-      maxPriorityFeePerGas: '0x0',
-      signature: '0x' as `0x${string}`,
+      maxFeePerGas: 0n,
+      maxPriorityFeePerGas: 0n,
+      signature: '0x' as Hex,
+      preVerificationGas: 21000n,
+      verificationGasLimit: 100000n,
+      callGasLimit: 100000n,
     };
 
     // Get paymaster stub data
-    let paymasterStub: PimlicoPaymasterStubData;
+    let paymasterStub: {
+      paymaster: `0x${string}`;
+      paymasterData: `0x${string}`;
+      paymasterVerificationGasLimit: bigint;
+      paymasterPostOpGasLimit: bigint;
+    };
     try {
-      paymasterStub = await this.getPaymasterStubData(baseUserOp, entryPoint, this.sponsorshipPolicy);
+      const result = await this.paymasterClient.getPaymasterStubData({
+        sender: params.sender,
+        nonce: 0n,
+        factory,
+        factoryData,
+        callData: params.callData,
+        callGasLimit: 100000n,
+        entryPointAddress: entryPoint,
+        chainId,
+        context: { sponsorshipPolicyId: this.sponsorshipPolicy },
+      });
+      // Handle v0.6 vs v0.7+ return format
+      if ('paymasterAndData' in result) {
+        paymasterStub = {
+          paymaster: result.paymasterAndData as `0x${string}`,
+          paymasterData: '0x' as `0x${string}`,
+          paymasterVerificationGasLimit: 0n,
+          paymasterPostOpGasLimit: 0n,
+        };
+      } else {
+        paymasterStub = {
+          paymaster: result.paymaster,
+          paymasterData: result.paymasterData,
+          paymasterVerificationGasLimit: result.paymasterVerificationGasLimit ?? 0n,
+          paymasterPostOpGasLimit: result.paymasterPostOpGasLimit,
+        };
+      }
     } catch (err) {
       this.logger.warn(`Paymaster stub failed: ${(err as Error).message}`);
-      paymasterStub = { paymaster: null as any, paymasterData: null as any, paymasterVerificationGasLimit: '0x0', paymasterPostOpGasLimit: '0x0' };
+      paymasterStub = {
+        paymaster: '0x' as `0x${string}`,
+        paymasterData: '0x' as `0x${string}`,
+        paymasterVerificationGasLimit: 0n,
+        paymasterPostOpGasLimit: 0n,
+      };
     }
 
-    const gasEstimate = await this.estimateUserOperationGas(baseUserOp, entryPoint);
-
-    const pmUserOp: Partial<PimlicoUserOperation> = {
-      ...baseUserOp,
-      paymaster: paymasterStub.paymaster,
-      paymasterData: paymasterStub.paymasterData,
+    // Build userOp with paymaster stub for gas estimation
+    const userOpForEstimate = {
+      ...defaultUserOp,
+      paymaster: paymasterStub.paymaster as `0x${string}`,
+      paymasterData: paymasterStub.paymasterData as `0x${string}`,
       paymasterVerificationGasLimit: paymasterStub.paymasterVerificationGasLimit,
       paymasterPostOpGasLimit: paymasterStub.paymasterPostOpGasLimit,
-      callGasLimit: gasEstimate.callGasLimit,
-      verificationGasLimit: gasEstimate.verificationGasLimit,
-      preVerificationGas: gasEstimate.preVerificationGas,
     };
 
-    let paymasterData: PimlicoPaymasterData;
+    // Estimate gas
+    type GasEstimate = { callGasLimit: bigint; verificationGasLimit: bigint; preVerificationGas: bigint };
+    let gasEstimate: GasEstimate;
     try {
-      paymasterData = await this.getPaymasterData(pmUserOp, entryPoint, this.sponsorshipPolicy);
+      gasEstimate = await this.bundlerClient.estimateUserOperationGas({
+        ...userOpForEstimate,
+        entryPointAddress: entryPoint,
+      }) as GasEstimate;
+    } catch (err) {
+      this.logger.warn(`Gas estimation failed: ${(err as Error).message}`);
+      gasEstimate = {
+        callGasLimit: 100000n,
+        verificationGasLimit: 100000n,
+        preVerificationGas: 21000n,
+      };
+    }
+
+    // Get real paymaster data
+    let paymasterData: {
+      paymaster: `0x${string}`;
+      paymasterData: `0x${string}`;
+      paymasterVerificationGasLimit: bigint;
+      paymasterPostOpGasLimit: bigint;
+    };
+    try {
+      const result = await this.paymasterClient.getPaymasterData({
+        sender: params.sender,
+        nonce: 0n,
+        factory,
+        factoryData,
+        callData: params.callData,
+        callGasLimit: gasEstimate.callGasLimit,
+        verificationGasLimit: gasEstimate.verificationGasLimit,
+        preVerificationGas: gasEstimate.preVerificationGas,
+        maxFeePerGas: 0n,
+        maxPriorityFeePerGas: 0n,
+        entryPointAddress: entryPoint,
+        chainId,
+        context: { sponsorshipPolicyId: this.sponsorshipPolicy },
+      });
+      // Handle v0.6 vs v0.7+ return format
+      if ('paymasterAndData' in result) {
+        paymasterData = {
+          paymaster: result.paymasterAndData as `0x${string}`,
+          paymasterData: '0x' as `0x${string}`,
+          paymasterVerificationGasLimit: 0n,
+          paymasterPostOpGasLimit: 0n,
+        };
+      } else {
+        paymasterData = {
+          paymaster: result.paymaster,
+          paymasterData: result.paymasterData,
+          paymasterVerificationGasLimit: result.paymasterVerificationGasLimit ?? 0n,
+          paymasterPostOpGasLimit: result.paymasterPostOpGasLimit ?? 0n,
+        };
+      }
     } catch (err) {
       this.logger.warn(`Paymaster data failed: ${(err as Error).message}`);
-      paymasterData = { paymaster: null as any, paymasterData: null as any, paymasterVerificationGasLimit: '0x0', paymasterPostOpGasLimit: '0x0' };
+      paymasterData = {
+        paymaster: '0x' as `0x${string}`,
+        paymasterData: '0x' as `0x${string}`,
+        paymasterVerificationGasLimit: 0n,
+        paymasterPostOpGasLimit: 0n,
+      };
     }
 
     return {
       nonce: '0x0',
-      callGasLimit: gasEstimate.callGasLimit,
-      verificationGasLimit: gasEstimate.verificationGasLimit,
-      preVerificationGas: gasEstimate.preVerificationGas,
-      paymaster: paymasterData.paymaster,
-      paymasterData: paymasterData.paymasterData,
-      paymasterVerificationGasLimit: paymasterData.paymasterVerificationGasLimit,
-      paymasterPostOpGasLimit: paymasterData.paymasterPostOpGasLimit,
+      callGasLimit: toHex(gasEstimate.callGasLimit),
+      verificationGasLimit: toHex(gasEstimate.verificationGasLimit),
+      preVerificationGas: toHex(gasEstimate.preVerificationGas),
+      paymaster: paymasterData.paymaster || null,
+      paymasterData: paymasterData.paymasterData || null,
+      paymasterVerificationGasLimit: toHex(paymasterData.paymasterVerificationGasLimit),
+      paymasterPostOpGasLimit: toHex(paymasterData.paymasterPostOpGasLimit),
     };
   }
 
