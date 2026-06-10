@@ -32,7 +32,7 @@ export interface InstallationExecutionsResponse {
   installationId: string;
   chainId: number;
   latest: ExecutionProof | null;
-  data: ExecutionRecord[];
+  data: (ExecutionRecord & { explorerUrl?: string })[];
 }
 
 export interface ExecutionProof {
@@ -58,7 +58,8 @@ export class InstallationsService {
     localField: 'skillId',
     foreignField: 'skillId',
     justOne: true,
-    select: 'skillId name iconUrl runType chainId',
+    select:
+      'skillId name iconUrl runType chainId delegationScope delegationScopeMeta parameters trigger x402Services aiConfig',
   };
 
   constructor(
@@ -178,6 +179,12 @@ export class InstallationsService {
       .lean()
       .exec();
     if (!inst) throw new NotFoundException('Installation not found');
+
+    inst.executions = (inst.executions ?? []).map((e) => ({
+      ...e,
+      explorerUrl: getExplorerTxUrl(inst.chainId, e.txHash),
+    })) as ExecutionRecord[];
+
     return inst;
   }
 

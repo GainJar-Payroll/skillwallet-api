@@ -86,7 +86,12 @@ export class OneShotService {
   }
 
   async getStatus(taskId: `0x${string}`): Promise<OneShotStatus> {
-    return this.rpc<OneShotStatus>('relayer_getStatus', { id: taskId, logs: true });
+    const result = await this.rpc<any>('relayer_getStatus', { id: taskId, logs: true });
+    // Normalize: 1Shot returns receipt.transactionHash, not hash at root
+    if (result.receipt?.transactionHash && !result.hash) {
+      result.hash = result.receipt.transactionHash;
+    }
+    return result as OneShotStatus;
   }
 
   async poll(taskId: `0x${string}`, options: OneShotPollOptions = {}): Promise<OneShotStatus> {

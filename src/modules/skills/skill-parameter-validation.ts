@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { parseExpression } from 'cron-parser';
 import { getAddress } from 'viem';
 import type {
   SkillParameterDefinition,
@@ -68,6 +69,10 @@ export function normalizeParameterInput(
     }
 
     return normalized;
+  }
+
+  if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+    return input as NormalizedSkillParameters;
   }
 
   throw new BadRequestException(
@@ -160,6 +165,22 @@ function validateParameterValue(
       }
 
       return getAddress(rawValue);
+    }
+
+    case 'cron': {
+      if (typeof rawValue !== 'string') {
+        throw new BadRequestException(`Skill parameter ${key} must be a string`);
+      }
+
+      try {
+        parseExpression(rawValue);
+      } catch {
+        throw new BadRequestException(
+          `Skill parameter ${key} is not a valid cron expression: ${rawValue}`,
+        );
+      }
+
+      return rawValue;
     }
 
     default: {

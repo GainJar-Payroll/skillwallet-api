@@ -54,7 +54,7 @@ const VIEM_CHAINS: Record<number, Chain> = {
 export class SponsorService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SponsorService.name);
 
-  private readonly feeChainId: number;
+  private readonly supportedChains: number[] = [84532, 8453];
   private readonly budgetAtoms: bigint;
   private readonly refreshThreshold: number;
   private readonly statelessImplAddress: `0x${string}`;
@@ -65,7 +65,6 @@ export class SponsorService implements OnApplicationBootstrap {
     private readonly oneShotService: OneShotService,
     private readonly config: ConfigService,
   ) {
-    this.feeChainId = Number(this.config.get<string | number>('sponsorFeeChainId') ?? 8453);
     this.budgetAtoms = BigInt(
       this.config.get<string>('sponsorBudgetAtoms') ?? String(DEFAULT_BUDGET_ATOMS),
     );
@@ -82,10 +81,13 @@ export class SponsorService implements OnApplicationBootstrap {
       this.logger.warn('SPONSOR_PRIVATE_KEY not configured — dapp-sponsored gas disabled');
       return;
     }
-    try {
-      await this.ensureReady();
-    } catch (err) {
-      this.logger.error(`Sponsor bootstrap failed: ${(err as Error).message}`);
+    for (const chainId of this.supportedChains) {
+      try {
+        await this.ensureReady(chainId);
+      } catch (err) {
+        // Non-fatal: 1Shot may not support this chain in current environment
+        this.logger.warn(`Sponsor bootstrap skipped for chainId=${chainId}: ${(err as Error).message}`);
+      }
     }
   }
 
@@ -93,18 +95,21 @@ export class SponsorService implements OnApplicationBootstrap {
    * Returns the sponsor's permission context + fee execution to embed in the relayer bundle,
    * or null when sponsorship is not configured for the fee chain.
    */
-  async getSponsorContext(): Promise<SponsorContext | null> {
-    const state = await this.stateModel.findOne({ chainId: this.feeChainId }).lean().exec();
+  async getSponsorContext(installationChainId: number): Promise<SponsorContext | null> {
+    const feeChainId = installationChainId;
+    if (!this.supportedChains.includes(feeChainId)) return null;
+
+    const state = await this.stateModel.findOne({ chainId: feeChainId }).lean().exec();
     if (!state) return null;
 
     const ctx: SponsorContext = {
-      feeChainId: this.feeChainId,
+      feeChainId,
       permissionContext: [OneShotService.toRelayerJson(state.signedDelegation)],
-      feeExecution: this.buildFeeExecution(state.feeCollector as `0x${string}`),
+      feeExecution: this.buildFeeExecution(state.feeCollector as `0x${string}`, feeChainId),
     };
 
     if (!state.eip7702Upgraded) {
-      ctx.authorizationList = await this.buildAuthorizationList();
+      ctx.authorizationList = await this.buildAuthorizationList(feeChainId);
     }
 
     return ctx;
@@ -115,8 +120,8 @@ export class SponsorService implements OnApplicationBootstrap {
    * Marks EIP-7702 upgrade done and increments the local spend counter.
    * Triggers a background delegation refresh if budget is running low.
    */
-  async recordSuccessfulExecution(): Promise<void> {
-    const state = await this.stateModel.findOne({ chainId: this.feeChainId }).exec();
+  async recordSuccessfulExecution(chainId: number): Promise<void> {
+    const state = await this.stateModel.findOne({ chainId }).exec();
     if (!state) return;
 
     if (!state.eip7702Upgraded) {
@@ -128,14 +133,14 @@ export class SponsorService implements OnApplicationBootstrap {
     await state.save();
 
     const ratio = Number(used) / Number(BigInt(state.maxAmountAtoms));
-    this.logger.debug(`Sponsor budget ${(ratio * 100).toFixed(1)}% used`);
+    this.logger.debug(`Sponsor budget ${(ratio * 100).toFixed(1)}% used chainId=${chainId}`);
 
     if (ratio >= this.refreshThreshold) {
       this.logger.log(
         `Sponsor budget at ${(ratio * 100).toFixed(0)}% — refreshing delegation in background`,
       );
-      void this.signAndPersistDelegation().catch((err: Error) => {
-        this.logger.error(`Delegation refresh failed: ${err.message}`);
+      void this.signAndPersistDelegation(chainId).catch((err: Error) => {
+        this.logger.error(`Delegation refresh failed for chainId=${chainId}: ${err.message}`);
       });
     }
   }
@@ -144,8 +149,8 @@ export class SponsorService implements OnApplicationBootstrap {
   // Private
   // ---------------------------------------------------------------------------
 
-  private async ensureReady(): Promise<void> {
-    const existing = await this.stateModel.findOne({ chainId: this.feeChainId }).lean().exec();
+  private async ensureReady(chainId: number): Promise<void> {
+    const existing = await this.stateModel.findOne({ chainId }).lean().exec();
 
     if (existing) {
       const ratio =
@@ -153,7 +158,7 @@ export class SponsorService implements OnApplicationBootstrap {
 
       if (ratio < this.refreshThreshold) {
         this.logger.log(
-          `Sponsor ready chainId=${this.feeChainId} address=${existing.sponsorAddress} (${(ratio * 100).toFixed(0)}% used)`,
+          `Sponsor ready chainId=${chainId} address=${existing.sponsorAddress} (${(ratio * 100).toFixed(0)}% used)`,
         );
         return;
       }
@@ -161,13 +166,13 @@ export class SponsorService implements OnApplicationBootstrap {
       this.logger.log(`Budget at ${(ratio * 100).toFixed(0)}% — refreshing on startup`);
     }
 
-    await this.signAndPersistDelegation();
+    await this.signAndPersistDelegation(chainId);
   }
 
-  private async signAndPersistDelegation(): Promise<void> {
+  private async signAndPersistDelegation(chainId: number): Promise<void> {
     const pk = this.config.get<string>('sponsorPrivateKey')!;
     const account = privateKeyToAccount(pk as `0x${string}`);
-    const publicClient = this.makePublicClient(this.feeChainId);
+    const publicClient = this.makePublicClient(chainId);
 
     const smartAccount = await toMetaMaskSmartAccount({
       client: publicClient as Parameters<typeof toMetaMaskSmartAccount>[0]['client'],
@@ -176,16 +181,16 @@ export class SponsorService implements OnApplicationBootstrap {
       signer: { account },
     });
 
-    const capabilities = await this.oneShotService.getCapabilities(this.feeChainId);
-    const chainInfo = capabilities[String(this.feeChainId)] as
+    const capabilities = await this.oneShotService.getCapabilities(chainId);
+    const chainInfo = capabilities[String(chainId)] as
       | { targetAddress?: string; feeCollector?: string }
       | undefined;
 
     if (!chainInfo?.targetAddress || !chainInfo.feeCollector) {
-      throw new Error(`1Shot missing targetAddress/feeCollector for chainId=${this.feeChainId}`);
+      throw new Error(`1Shot missing targetAddress/feeCollector for chainId=${chainId}`);
     }
 
-    const chainConfig = getChainConfig(this.feeChainId);
+    const chainConfig = getChainConfig(chainId);
     const salt = bytesToHex(Uint8Array.from(randomBytes(32))) as `0x${string}`;
 
     const delegation = createDelegation({
@@ -203,13 +208,13 @@ export class SponsorService implements OnApplicationBootstrap {
     const signature = await smartAccount.signDelegation({ delegation });
 
     // Preserve eip7702Upgraded across refreshes — if already upgraded, keep it true
-    const current = await this.stateModel.findOne({ chainId: this.feeChainId }).lean().exec();
+    const current = await this.stateModel.findOne({ chainId }).lean().exec();
 
     await this.stateModel.findOneAndUpdate(
-      { chainId: this.feeChainId },
+      { chainId },
       {
         $set: {
-          chainId: this.feeChainId,
+          chainId,
           sponsorAddress: account.address,
           feeCollector: getAddress(chainInfo.feeCollector),
           targetAddress: getAddress(chainInfo.targetAddress),
@@ -226,15 +231,13 @@ export class SponsorService implements OnApplicationBootstrap {
       { upsert: true, new: true },
     );
 
-    this.logger.log(
-      `Sponsor delegation signed chainId=${this.feeChainId} address=${account.address}`,
-    );
+    this.logger.log(`Sponsor delegation signed chainId=${chainId} address=${account.address}`);
   }
 
-  private async buildAuthorizationList(): Promise<unknown[]> {
+  private async buildAuthorizationList(chainId: number): Promise<unknown[]> {
     const pk = this.config.get<string>('sponsorPrivateKey')!;
     const account = privateKeyToAccount(pk as `0x${string}`);
-    const publicClient = this.makePublicClient(this.feeChainId);
+    const publicClient = this.makePublicClient(chainId);
 
     const nonce = await publicClient.getTransactionCount({
       address: account.address,
@@ -242,17 +245,17 @@ export class SponsorService implements OnApplicationBootstrap {
     });
 
     const signed = await account.signAuthorization({
-      chainId: this.feeChainId,
+      chainId,
       contractAddress: this.statelessImplAddress,
       nonce,
     });
 
-    const { address, chainId, nonce: authNonce, r, s, yParity } = signed;
-    return [{ address, chainId, nonce: authNonce, r, s, yParity }];
+    const { address, chainId: sigChainId, nonce: authNonce, r, s, yParity } = signed;
+    return [{ address, chainId: sigChainId, nonce: authNonce, r, s, yParity }];
   }
 
-  private buildFeeExecution(feeCollector: `0x${string}`): OneShotExecution {
-    const chainConfig = getChainConfig(this.feeChainId);
+  private buildFeeExecution(feeCollector: `0x${string}`, chainId: number): OneShotExecution {
+    const chainConfig = getChainConfig(chainId);
     return {
       target: chainConfig.tokens.usdc,
       value: '0',

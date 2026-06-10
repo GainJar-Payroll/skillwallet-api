@@ -6,7 +6,7 @@ import { IsEvmAddress } from 'src/common/validator/is-evm-address';
 export class ConfirmInstallationDto {
   @ApiProperty({
     description: 'Public skillId of the skill being installed',
-    example: 'generic-dca-84532',
+    example: 'custom-cron-dca-84532',
   })
   @IsString()
   @IsNotEmpty()

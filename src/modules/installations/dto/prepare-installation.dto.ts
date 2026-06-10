@@ -6,7 +6,7 @@ import { IsEvmAddress } from 'src/common/validator/is-evm-address';
 export class PrepareInstallationDto {
   @ApiProperty({
     description: 'Public skillId defined by the skill catalog',
-    example: 'generic-dca-84532',
+    example: 'custom-cron-dca-84532',
   })
   @IsString()
   @IsNotEmpty()

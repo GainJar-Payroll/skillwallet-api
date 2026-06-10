@@ -29,6 +29,8 @@ Query params (optional):
 - `onlyActive=true` (default) filters out `isActive: false`.
 - `chainId=<number>` filters by chain.
 
+Response includes `delegationScopeMeta` — human-readable metadata (label, description, block explorer URL) for each contract in `delegationScope.targets[]`, same-indexed so FE can loop and render contract info alongside each scope item.
+
 Response `200`:
 ```json
 {
@@ -39,9 +41,20 @@ Response `200`:
       "description": "Dollar-cost average USDC into a selected Base token on a fixed schedule.",
       "iconUrl": "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/usdc.png",
       "runType": "cron",
-      "cronExpression": "0 9 * * *",
+      "trigger": {
+        "type": "cron",
+        "cronExpression": "0 9 * * *"
+      },
       "chainId": 84532,
       "delegationScope": { "...": "..." },
+      "delegationScopeMeta": [
+        {
+          "target": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          "label": "USDC Token",
+          "description": "Let the agent transfer and approve USDC tokens for DCA swaps",
+          "contractUrl": "https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        }
+      ],
       "parameters": [
         {
           "key": "outputToken",
@@ -91,8 +104,20 @@ For each `parameter` in `skill.parameters`, render the matching control:
 | `boolean` | checkbox/toggle | boolean only |
 | `string` | text input | string |
 | `address` | text input with 0x validation | string (BE normalizes via `getAddress`) |
+| `cron` | text input | string (cron expression validated server-side) |
 
+#### Delegation scope metadata
+
+`skill.delegationScopeMeta` is an array of objects (same index as `delegationScope.targets[]`), each with:
+- `target` — contract address
+- `label` — short display name
+- `description` — what this contract does in the delegation context
+- `contractUrl` — block explorer link
+
+FE can render these alongside each delegation scope item in the install card so the user understands which contracts the agent will interact with.
 Rules:
+
+
 - Required parameters with no default must be filled before submit.
 - Optional parameters may be empty; BE will fall back to `defaultValue` when defined.
 - `select` is enforced as a closed enum: never let the user type a free string for select token fields.

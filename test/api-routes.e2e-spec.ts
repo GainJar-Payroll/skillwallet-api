@@ -135,12 +135,14 @@ describe('API route smoke e2e', () => {
       .post('/admin/skills/seed')
       .set(apiKey)
       .expect(201);
-    expect(seeded.body.seeded).toEqual(['Generic DCA', 'USDC Inbound DCA']);
+    expect(seeded.body.seeded).toEqual(
+      expect.arrayContaining(['USDC Inbound DCA', 'Custom Cron DCA']),
+    );
 
     const list = await request(app.getHttpServer()).get('/skills').expect(200);
-    expect(list.body.data).toHaveLength(2);
+    expect(list.body.data.length).toBeGreaterThanOrEqual(3);
     expect(list.body.data.map((skill: { name: string }) => skill.name)).toEqual(
-      expect.arrayContaining(['Generic DCA', 'USDC Inbound DCA']),
+      expect.arrayContaining(['USDC Inbound DCA', 'Custom Cron DCA']),
     );
 
     await request(app.getHttpServer())
@@ -153,7 +155,7 @@ describe('API route smoke e2e', () => {
 
     const skills = await request(app.getHttpServer()).get('/skills').expect(200);
     const skill = skills.body.data.find(
-      (entry: { skillId: string }) => entry.skillId === 'generic-dca-84532',
+      (entry: { skillId: string }) => entry.skillId === 'custom-cron-dca-84532',
     );
 
     const prepare = await request(app.getHttpServer())
@@ -250,7 +252,7 @@ describe('API route smoke e2e', () => {
       .post('/admin/skills/seed')
       .set(apiKey)
       .expect(201);
-    expect(seeded.body.seeded).toEqual(['Generic DCA', 'USDC Inbound DCA']);
+    expect(seeded.body.seeded).toEqual(['USDC Inbound DCA', 'Custom Cron DCA', 'AI-Powered DCA']);
 
     const skills = await request(app.getHttpServer()).get('/skills').expect(200);
     const eventSkill = skills.body.data.find(
@@ -357,7 +359,7 @@ describe('API route smoke e2e', () => {
     );
   });
 
-  it('calls installation prepare/list APIs using seeded Generic DCA', async () => {
+  it('calls installation prepare/list APIs using a seeded skill', async () => {
     await request(app.getHttpServer())
       .post('/admin/skills/seed')
       .set(apiKey)

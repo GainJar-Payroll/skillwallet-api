@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import { encodeFunctionData, erc20Abi, getAddress } from 'viem';
+import { createPublicClient, encodeFunctionData, erc20Abi, getAddress, http } from 'viem';
 import { getChainConfig, type ChainConfig } from '../../config/chains.config';
 import { SkillsService } from '../skills/skills.service';
 import { InstallationsService } from '../installations/installations.service';
@@ -25,6 +26,8 @@ const FEE_AMOUNT_ATOMS = 10_000n;
 export interface ExecutionContext {
   trigger?: ExecutionTriggerRecord;
   spend?: ExecutionSpendRecord & { skippedReason?: string };
+  aiContext?: string;
+  newsContext?: string;
 }
 
 @Injectable()
@@ -32,6 +35,7 @@ export class RunnerService {
   private readonly logger = new Logger(RunnerService.name);
 
   constructor(
+    private readonly config: ConfigService,
     private readonly skillsService: SkillsService,
     private readonly installationsService: InstallationsService,
     private readonly oneShotService: OneShotService,
@@ -46,8 +50,50 @@ export class RunnerService {
     const skill = await this.resolveSkill(installation);
     const chainConfig = getChainConfig(installation.chainId);
     const feeCollector = await this.fetchFeeCollector(installation.chainId);
-    const sponsorCtx = await this.sponsorService.getSponsorContext();
+    const sponsorCtx = await this.sponsorService.getSponsorContext(installation.chainId);
     const workExecutions = this.buildWorkExecutions(skill, installation, chainConfig);
+
+    // USDC balance pre-check — skip if insufficient
+    if (process.env.NODE_ENV !== 'test') {
+      const amountIn = BigInt(
+        String(
+          (installation.parameters as Record<string, unknown>)?.['amountPerRun'] ??
+          (installation.parameters as Record<string, unknown>)?.['amountUsdc'] ??
+          '10000000',
+        ),
+      );
+      if (amountIn > 0n) {
+        const rpcUrls = this.config.get<Record<number, string>>('rpc');
+        const rpcUrl = rpcUrls?.[installation.chainId];
+        if (rpcUrl) {
+          try {
+            const client = createPublicClient({ transport: http(rpcUrl) });
+            const balance = await client.readContract({
+              address: chainConfig.tokens.usdc,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [installation.smartAccountAddress as `0x${string}`],
+            }) as bigint;
+
+            if (balance < amountIn) {
+              const skippedRecord: ExecutionRecord = {
+                executionId: randomUUID(),
+                executedAt: new Date(),
+                status: 'skipped',
+                skippedReason: 'insufficient-balance',
+              };
+              await this.installationsService.appendExecution(installationId, skippedRecord);
+              this.logger.warn(
+                `Skipped installation=${installationId}: insufficient USDC balance (have=${balance}, need=${amountIn})`,
+              );
+              return;
+            }
+          } catch (err) {
+            this.logger.warn(`Balance check failed (non-fatal, proceeding): ${(err as Error).message}`);
+          }
+        }
+      }
+    }
 
     const record = this.initRecord(ctx);
 
@@ -74,6 +120,7 @@ export class RunnerService {
       record.executionId!,
       taskId,
       Boolean(sponsorCtx),
+      installation.chainId,
       ctx.spend?.reservationId,
     ).catch((err: Error) => {
       this.logger.error(`Poll failed installation=${installationId}: ${err.message}`);
@@ -285,6 +332,8 @@ export class RunnerService {
       status: 'pending',
       trigger: ctx.trigger,
       spend: ctx.spend,
+      aiContext: ctx.aiContext,
+      newsContext: ctx.newsContext,
     };
   }
 
@@ -311,6 +360,7 @@ export class RunnerService {
     executionId: string,
     taskId: `0x${string}`,
     isSponsored: boolean,
+    chainId: number,
     reservationId?: string,
   ): Promise<void> {
     try {
@@ -324,7 +374,7 @@ export class RunnerService {
       }
 
       if (confirmed && isSponsored) {
-        void this.sponsorService.recordSuccessfulExecution().catch((err: Error) => {
+        void this.sponsorService.recordSuccessfulExecution(chainId).catch((err: Error) => {
           this.logger.warn(`Failed to record sponsor spend: ${err.message}`);
         });
       }

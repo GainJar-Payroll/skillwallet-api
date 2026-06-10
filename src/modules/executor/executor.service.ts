@@ -21,7 +21,7 @@ export class ExecutorService implements OnModuleInit {
   onModuleInit(): void {
     const pk = this.config.get<`0x${string}`>('executorPrivateKey');
     if (!pk) {
-      throw new Error('EXECUTOR_PRIVATE_KEY is missing from config');
+      throw new Error('executorPrivateKey is missing from config (set SPONSOR_PRIVATE_KEY)');
     }
     this.account = privateKeyToAccount(pk);
     this.logger.log(`Executor address: ${this.account.address}`);

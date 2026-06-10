@@ -62,3 +62,29 @@ export interface SkillLimitsConfig {
   maxExecutionsPerDay?: number;
   [key: string]: unknown;
 }
+
+export interface X402ServiceConfig {
+  key: string;
+  endpoint: string;
+  method?: 'GET' | 'POST';
+  /** Where to store result in execution context: "newsContext", "marketData" */
+  output: string;
+  required?: boolean;
+}
+
+export interface AISkillConfig {
+  provider: 'venice';
+  model?: string;
+  /** System prompt template. Can include {{newsContext}}, {{params}}, {{history}} placeholders */
+  promptTemplate: string;
+  /** Map of input source keys → where they appear in the prompt */
+  inputSources: {
+    /** Keys from x402Services[].output to inject into prompt context */
+    fromX402: string[];
+    /** Whether to include installation parameters */
+    includeParams: boolean;
+    /** Whether to include recent execution history (last 5) */
+    includeHistory: boolean;
+  };
+  maxTokens?: number;
+}

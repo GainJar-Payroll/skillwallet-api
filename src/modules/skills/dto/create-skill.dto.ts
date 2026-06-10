@@ -8,18 +8,18 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
-import type { SkillLimitsConfig, SkillRunType, SkillTriggerConfig } from '../skill-config.types';
+import type { AISkillConfig, SkillLimitsConfig, SkillRunType, SkillTriggerConfig, X402ServiceConfig } from '../skill-config.types';
 import type { SkillParameterDefinition } from '../skill-parameter.types';
-import { DelegationScopeConfig, Skill } from '../schemas/skill.schema';
+import { DelegationScopeConfig, DelegationScopeMetaItem, Skill } from '../schemas/skill.schema';
 
 export class CreateSkillDto extends Skill {
-  @ApiProperty({ description: 'Display name of the skill', example: 'Generic DCA' })
+  @ApiProperty({ description: 'Display name of the skill', example: 'Custom Cron DCA' })
   @IsString()
   name!: string;
 
   @ApiProperty({
     description: 'Unique identifier for the skill + Chain Id',
-    example: 'generic-dca-84532',
+    example: 'custom-cron-dca-84532',
   })
   @IsString()
   skillId!: string;
@@ -70,6 +70,16 @@ export class CreateSkillDto extends Skill {
   delegationScope!: DelegationScopeConfig;
 
   @ApiPropertyOptional({
+    description:
+      'Human-readable metadata for each delegation scope target (same index as delegationScope.targets[]). FE can loop and render contract info alongside each scope item.',
+    type: 'array',
+    items: { type: 'object', additionalProperties: true },
+  })
+  @IsOptional()
+  @IsArray()
+  delegationScopeMeta?: DelegationScopeMetaItem[];
+
+  @ApiPropertyOptional({
     description: 'Optional runtime limits for execution frequency or spend caps',
     type: 'object',
     additionalProperties: true,
@@ -95,6 +105,24 @@ export class CreateSkillDto extends Skill {
   @IsOptional()
   @IsObject()
   metadata!: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'x402-payable API services the skill consumes. Each fetches data via on-chain payment protocol.',
+    type: 'array',
+    items: { type: 'object', additionalProperties: true },
+  })
+  @IsOptional()
+  @IsArray()
+  x402Services?: X402ServiceConfig[];
+
+  @ApiPropertyOptional({
+    description: 'AI analysis config. When set, the runner feeds x402 outputs + params + history to the AI before each execution. AI can gate the execution via structured decision.',
+    type: 'object',
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @IsObject()
+  aiConfig?: AISkillConfig;
 
   @ApiPropertyOptional({ description: 'Whether the skill is currently listed', example: true })
   @IsOptional()

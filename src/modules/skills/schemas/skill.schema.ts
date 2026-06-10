@@ -2,9 +2,11 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import {
   SkillRunEnum,
+  type AISkillConfig,
   type SkillLimitsConfig,
   type SkillRunType,
   type SkillTriggerConfig,
+  type X402ServiceConfig,
 } from '../skill-config.types';
 import type { SkillParameterDefinition } from '../skill-parameter.types';
 
@@ -18,6 +20,19 @@ export class DelegationScopeConfig {
   tokenAddress?: string;
   maxAmount?: string;
   [key: string]: unknown;
+}
+
+export class DelegationScopeMetaItem {
+  target!: string;
+  label!: string;
+  description!: string;
+  contractUrl!: string;
+  @Prop({ type: [Object], default: [] })
+  selectors?: {
+    signature: string;
+    label: string;
+    description: string;
+  }[];
 }
 
 export type SkillDocument = Skill & Document;
@@ -52,10 +67,19 @@ export class Skill {
   delegationScope!: DelegationScopeConfig;
 
   @Prop({ type: [Object], default: [] })
+  delegationScopeMeta?: DelegationScopeMetaItem[];
+
+  @Prop({ type: [Object], default: [] })
   parameters!: SkillParameter[];
 
   @Prop({ default: true, index: true })
   isActive!: boolean;
+
+  @Prop({ type: [Object], default: [] })
+  x402Services?: X402ServiceConfig[];
+
+  @Prop({ type: Object })
+  aiConfig?: AISkillConfig;
 
   @Prop({ type: Object, default: {} })
   metadata!: Record<string, unknown>;
