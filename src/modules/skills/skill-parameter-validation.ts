@@ -108,7 +108,7 @@ function validateParameterValue(
 
     case 'number': {
       if (typeof rawValue !== 'string' && typeof rawValue !== 'number') {
-        throw new BadRequestException(`Skill parameter ${key} must be a number`);
+        return definition.defaultValue;
       }
 
       const asString = String(rawValue).trim();
