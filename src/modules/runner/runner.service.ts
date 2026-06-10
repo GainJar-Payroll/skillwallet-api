@@ -1,29 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { encodeFunctionData, erc20Abi, getAddress } from 'viem';
-import { getChainConfig, ChainConfig } from '../../config/chains.config';
-import { Skill } from '../skills/schemas/skill.schema';
+import { randomUUID } from 'node:crypto';
+import { createPublicClient, encodeFunctionData, erc20Abi, getAddress, http } from 'viem';
+import { getChainConfig, type ChainConfig } from '../../config/chains.config';
 import { SkillsService } from '../skills/skills.service';
 import { InstallationsService } from '../installations/installations.service';
-import { OneShotExecution, OneShotService, OneShotStatus } from '../oneshot/oneshot.service';
-import { X402Service } from '../x402/x402.service';
-import { VeniceService } from '../venice/venice.service';
 import {
-  ExecutionRecord,
-  ExecutionSpendRecord,
-  ExecutionTriggerRecord,
-  Installation,
-} from '../installations/schemas/installation.schema';
-import { GM_ABI, SWAP_ROUTER_02_ABI } from './abis';
-import { detectDcaExecution, normalizeSkillExecution } from '../skills/skill-config.util';
+  OneShotService,
+  type OneShotExecution,
+  type OneShotTransaction,
+} from '../oneshot/oneshot.service';
+import { SponsorService, type SponsorContext } from '../sponsor/sponsor.service';
 import { SpendReservationsService } from '../spend-reservations/spend-reservations.service';
+import {
+  type ExecutionRecord,
+  type ExecutionSpendRecord,
+  type ExecutionTriggerRecord,
+  type Installation,
+} from '../installations/schemas/installation.schema';
+import type { Skill } from '../skills/schemas/skill.schema';
+import { GM_ABI, SWAP_ROUTER_02_ABI } from './abis';
 
 const FEE_AMOUNT_ATOMS = 10_000n;
 
-export interface ExecuteInstallationContext {
+export interface ExecutionContext {
   trigger?: ExecutionTriggerRecord;
   spend?: ExecutionSpendRecord & { skippedReason?: string };
+  aiContext?: string;
+  newsContext?: string;
 }
 
 @Injectable()
@@ -35,126 +39,257 @@ export class RunnerService {
     private readonly skillsService: SkillsService,
     private readonly installationsService: InstallationsService,
     private readonly oneShotService: OneShotService,
-    private readonly x402Service: X402Service,
-    private readonly veniceService: VeniceService,
+    private readonly sponsorService: SponsorService,
     private readonly spendReservationsService: SpendReservationsService,
   ) {}
 
-  async executeInstallation(
-    installationId: string,
-    context: ExecuteInstallationContext = {},
-  ): Promise<void> {
+  async executeInstallation(installationId: string, ctx: ExecutionContext = {}): Promise<void> {
     const installation = await this.installationsService.findById(installationId);
-
     if (installation.status !== 'active') return;
 
-    const skillId =
-      typeof installation.skillId === 'object' &&
-      installation.skillId !== null &&
-      'skillId' in installation.skillId
-        ? String((installation.skillId as { skillId: unknown }).skillId)
-        : String(installation.skillId);
-
-    const skill = await this.skillsService.findById(skillId);
+    const skill = await this.resolveSkill(installation);
     const chainConfig = getChainConfig(installation.chainId);
+    const feeCollector = await this.fetchFeeCollector(installation.chainId);
+    const sponsorCtx = await this.sponsorService.getSponsorContext(installation.chainId);
+    const workExecutions = this.buildWorkExecutions(skill, installation, chainConfig);
 
-    let executions: OneShotExecution[];
-    let aiContext: string | undefined;
-    let newsContext: string | undefined;
-    const execution = normalizeSkillExecution(skill);
+    // USDC balance pre-check — skip if insufficient
+    if (process.env.NODE_ENV !== 'test') {
+      const amountIn = BigInt(
+        String(
+          (installation.parameters as Record<string, unknown>)?.['amountPerRun'] ??
+          (installation.parameters as Record<string, unknown>)?.['amountUsdc'] ??
+          '10000000',
+        ),
+      );
+      if (amountIn > 0n) {
+        const rpcUrls = this.config.get<Record<number, string>>('rpc');
+        const rpcUrl = rpcUrls?.[installation.chainId];
+        if (rpcUrl) {
+          try {
+            const client = createPublicClient({ transport: http(rpcUrl) });
+            const balance = await client.readContract({
+              address: chainConfig.tokens.usdc,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [installation.smartAccountAddress as `0x${string}`],
+            }) as bigint;
 
-    if (execution?.kind === 'dca-uniswap-v3' || detectDcaExecution(skill)) {
-      const result = await this.buildDcaExecutions(installation, chainConfig, {
-        amountIn: context.spend?.actualAmount,
-        feeTier:
-          typeof execution?.defaultFeeTier === 'number' ? Number(execution.defaultFeeTier) : undefined,
-      });
-      executions = result.executions;
-      aiContext = result.aiContext;
-      newsContext = result.newsContext;
-    } else if (skill.name === 'GM Everyday') {
-      executions = await this.buildGmExecutions(installation, chainConfig);
-    } else {
-      throw new Error(`Unknown skill: ${skill.name}`);
+            if (balance < amountIn) {
+              const skippedRecord: ExecutionRecord = {
+                executionId: randomUUID(),
+                executedAt: new Date(),
+                status: 'skipped',
+                skippedReason: 'insufficient-balance',
+              };
+              await this.installationsService.appendExecution(installationId, skippedRecord);
+              this.logger.warn(
+                `Skipped installation=${installationId}: insufficient USDC balance (have=${balance}, need=${amountIn})`,
+              );
+              return;
+            }
+          } catch (err) {
+            this.logger.warn(`Balance check failed (non-fatal, proceeding): ${(err as Error).message}`);
+          }
+        }
+      }
     }
 
-    const capabilities = await this.oneShotService.getCapabilities(installation.chainId);
-    const chainKey = String(installation.chainId);
-
-    const chainInfo = capabilities[chainKey] as
-      | { feeCollector?: `0x${string}`; targetAddress?: `0x${string}` }
-      | undefined;
-
-    const feeCollector = chainInfo?.feeCollector;
-
-    if (!feeCollector) {
-      throw new Error(`1Shot does not support chainId ${installation.chainId}`);
-    }
-
-    const feeTransfer = this.buildFeeTransfer(chainConfig, feeCollector);
-    const allExecutions = [feeTransfer, ...executions];
-
-    const record: ExecutionRecord = {
-      executionId: randomUUID(),
-      executedAt: new Date(),
-      status: 'pending',
-      trigger: context.trigger,
-      spend: context.spend,
-      aiContext,
-      newsContext,
-    };
+    const record = this.initRecord(ctx);
 
     let taskId: `0x${string}`;
-
     try {
-      const sendParams = {
-        chainId: String(installation.chainId),
-        transactions: [
-          {
-            permissionContext: [OneShotService.toRelayerJson(installation.signedDelegation)],
-            executions: allExecutions,
-          },
-        ],
-      };
-
-      this.logger.log(`Submitting 1Shot transaction for installation ${installationId}`);
-      this.logger.debug(JSON.stringify(sendParams, null, 2));
-
-      taskId = await this.oneShotService.send7710Transaction(sendParams);
+      taskId = await this.submitBundle({
+        installation,
+        chainConfig,
+        workExecutions,
+        feeCollector,
+        sponsorCtx,
+      });
     } catch (err) {
-      record.status = 'failed';
-      record.completedAt = new Date();
-      record.errorMessage = (err as Error).message;
-
-      if (context.spend?.reservationId) {
-        await this.spendReservationsService.releaseReservation(context.spend.reservationId);
-      }
-
-      await this.installationsService.appendExecution(installationId, record);
-
-      this.logger.error(`1Shot submission failed for ${installationId}: ${(err as Error).message}`);
-
+      await this.recordFailure(installationId, record, err as Error, ctx.spend?.reservationId);
       return;
     }
 
     record.oneShotTaskId = taskId;
     record.status = 'submitted';
-
     await this.installationsService.appendExecution(installationId, record);
 
-    void this.pollAndRecord(
+    void this.pollAndFinalize(
       installationId,
       record.executionId!,
       taskId,
-      context.spend?.reservationId,
-    ).catch((err) => {
-      this.logger.error(`1Shot polling failed for ${installationId}: ${(err as Error).message}`);
+      Boolean(sponsorCtx),
+      installation.chainId,
+      ctx.spend?.reservationId,
+    ).catch((err: Error) => {
+      this.logger.error(`Poll failed installation=${installationId}: ${err.message}`);
     });
   }
 
-  buildFeeTransfer(chainConfig: ChainConfig, feeCollector: `0x${string}`): OneShotExecution {
+  // ---------------------------------------------------------------------------
+  // Bundle submission
+  // ---------------------------------------------------------------------------
+
+  private async submitBundle(params: {
+    installation: Installation;
+    chainConfig: ChainConfig;
+    workExecutions: OneShotExecution[];
+    feeCollector: `0x${string}`;
+    sponsorCtx: SponsorContext | null;
+  }): Promise<`0x${string}`> {
+    const { installation, chainConfig, workExecutions, feeCollector, sponsorCtx } = params;
+    const userPermissionContext = [OneShotService.toRelayerJson(installation.signedDelegation)];
+
+    if (sponsorCtx && sponsorCtx.feeChainId !== installation.chainId) {
+      return this.submitMultichain({
+        sponsorCtx,
+        userPermissionContext,
+        workExecutions,
+        skillChainId: installation.chainId,
+      });
+    }
+
+    const transactions: OneShotTransaction[] = sponsorCtx
+      ? [
+          // Sponsor pays fee from their account; user's delegation covers only work
+          {
+            permissionContext: sponsorCtx.permissionContext,
+            executions: [sponsorCtx.feeExecution],
+          },
+          { permissionContext: userPermissionContext, executions: workExecutions },
+        ]
+      : [
+          // No sponsor: fee + work both from the user's smart account
+          {
+            permissionContext: userPermissionContext,
+            executions: [
+              this.buildFeeTransfer(chainConfig.tokens.usdc, feeCollector),
+              ...workExecutions,
+            ],
+          },
+        ];
+
+    return this.oneShotService.send7710Transaction({
+      chainId: String(installation.chainId),
+      transactions,
+      ...(sponsorCtx?.authorizationList && { authorizationList: sponsorCtx.authorizationList }),
+    });
+  }
+
+  private async submitMultichain(params: {
+    sponsorCtx: SponsorContext;
+    userPermissionContext: unknown[];
+    workExecutions: OneShotExecution[];
+    skillChainId: number;
+  }): Promise<`0x${string}`> {
+    const { sponsorCtx, userPermissionContext, workExecutions, skillChainId } = params;
+
+    const taskIds = await this.oneShotService.send7710TransactionMultichain([
+      {
+        chainId: String(sponsorCtx.feeChainId),
+        transactions: [
+          {
+            permissionContext: sponsorCtx.permissionContext,
+            executions: [sponsorCtx.feeExecution],
+          },
+        ],
+        ...(sponsorCtx.authorizationList && { authorizationList: sponsorCtx.authorizationList }),
+      },
+      {
+        chainId: String(skillChainId),
+        transactions: [{ permissionContext: userPermissionContext, executions: workExecutions }],
+      },
+    ]);
+
+    // taskIds[0] = fee chain, taskIds[1] = work chain
+    this.logger.debug(`Multichain bundle submitted feeTask=${taskIds[0]} workTask=${taskIds[1]}`);
+    return taskIds[1] as `0x${string}`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Work execution building
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Builds the skill-specific on-chain calls (everything except the fee transfer).
+   *
+   * TODO: Replace skillId-prefix dispatch with skill-defined execution templates
+   *       so new skills can be added without touching this service.
+   */
+  private buildWorkExecutions(
+    skill: Skill,
+    installation: Installation,
+    chainConfig: ChainConfig,
+  ): OneShotExecution[] {
+    if (skill.skillId.includes('dca')) {
+      return this.buildDcaExecutions(installation, chainConfig);
+    }
+    if (skill.skillId.includes('gm')) {
+      return this.buildGmExecutions(chainConfig);
+    }
+    this.logger.warn(`No work execution builder for skillId=${skill.skillId}`);
+    return [];
+  }
+
+  private buildDcaExecutions(
+    installation: Installation,
+    chainConfig: ChainConfig,
+  ): OneShotExecution[] {
+    const params = installation.parameters ?? {};
+    const amountIn = BigInt(String(params['amountPerRun'] ?? params['amountUsdc'] ?? '10000000'));
+    const outputToken = (params['outputToken'] as 'weth' | 'cbBtc' | undefined) ?? 'weth';
+    const tokenOut = outputToken === 'cbBtc' ? chainConfig.tokens.cbBtc : chainConfig.tokens.weth;
+    const feeTier = Number(params['feeTier'] ?? 500);
+    const recipient = getAddress(
+      String(params['recipient'] ?? installation.smartAccountAddress),
+    ) as `0x${string}`;
+
+    return [
+      {
+        target: chainConfig.tokens.usdc,
+        value: '0',
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [chainConfig.dex.swapRouter02, amountIn],
+        }),
+      },
+      {
+        target: chainConfig.dex.swapRouter02,
+        value: '0',
+        data: encodeFunctionData({
+          abi: SWAP_ROUTER_02_ABI,
+          functionName: 'exactInputSingle',
+          args: [
+            {
+              tokenIn: chainConfig.tokens.usdc,
+              tokenOut,
+              fee: feeTier,
+              recipient,
+              amountIn,
+              amountOutMinimum: 0n,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+        }),
+      },
+    ];
+  }
+
+  private buildGmExecutions(chainConfig: ChainConfig): OneShotExecution[] {
+    return [
+      {
+        target: chainConfig.skillContracts.gmContract,
+        value: '0',
+        data: encodeFunctionData({ abi: GM_ABI, functionName: 'gm', args: [] }),
+      },
+    ];
+  }
+
+  private buildFeeTransfer(usdc: `0x${string}`, feeCollector: `0x${string}`): OneShotExecution {
     return {
-      target: chainConfig.tokens.usdc,
+      target: usdc,
       value: '0',
       data: encodeFunctionData({
         abi: erc20Abi,
@@ -164,155 +299,102 @@ export class RunnerService {
     };
   }
 
-  async buildDcaExecutions(
-    installation: Installation,
-    chainConfig: ChainConfig,
-    options: { amountIn?: string; feeTier?: number } = {},
-  ): Promise<{
-    executions: OneShotExecution[];
-    aiContext?: string;
-    newsContext?: string;
-  }> {
-    let newsContext = '';
-    let aiContext = '';
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
 
-    try {
-      const news = await this.x402Service.fetch<{
-        headlines?: string;
-        content?: string;
-      }>(this.config.get<string>('ottoAiNewsUrl')!);
+  private async resolveSkill(installation: Installation): Promise<Skill> {
+    const populated = installation.skillId as unknown;
 
-      newsContext = news.headlines ?? news.content ?? JSON.stringify(news).slice(0, 500);
-      aiContext = await this.veniceService.summariseMarketContext(newsContext);
-    } catch (err) {
-      this.logger.warn(`DCA context enrichment failed: ${(err as Error).message}`);
+    // findById() populates skillId — if it's already the full doc, use it directly
+    if (typeof populated === 'object' && populated !== null && 'skillId' in (populated as object)) {
+      return populated as Skill;
     }
 
-    if (!installation.smartAccountAddress) {
-      throw new Error(
-        `Installation ${String((installation as any)._id)} has no smartAccountAddress`,
-      );
+    return this.skillsService.findById(String(populated));
+  }
+
+  private async fetchFeeCollector(chainId: number): Promise<`0x${string}`> {
+    const capabilities = await this.oneShotService.getCapabilities(chainId);
+    const chainInfo = capabilities[String(chainId)] as { feeCollector?: string } | undefined;
+
+    if (!chainInfo?.feeCollector) {
+      throw new Error(`1Shot does not support chainId=${chainId}`);
     }
 
-    const parameters = installation.parameters ?? {};
+    return chainInfo.feeCollector as `0x${string}`;
+  }
 
-    const amountUsdc = BigInt(
-      String(options.amountIn ?? parameters['amountPerRun'] ?? parameters['amountUsdc'] ?? '10000000'),
-    );
-
-    const tokenOutFromConfig = (parameters['tokenOut'] as { address?: string } | undefined)
-      ?.address;
-
-    const outputToken = (parameters['outputToken'] as 'weth' | 'cbBtc' | undefined) ?? 'weth';
-
-    const tokenOut = tokenOutFromConfig
-      ? (getAddress(tokenOutFromConfig) as `0x${string}`)
-      : outputToken === 'cbBtc'
-        ? chainConfig.tokens.cbBtc
-        : chainConfig.tokens.weth;
-
-    const feeTier = Number(options.feeTier ?? parameters['feeTier'] ?? 500);
-
-    const recipient = getAddress(
-      String(parameters['recipient'] ?? installation.smartAccountAddress),
-    ) as `0x${string}`;
-
-    const approveCalldata = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [chainConfig.dex.swapRouter02, amountUsdc],
-    });
-
-    const swapCalldata = encodeFunctionData({
-      abi: SWAP_ROUTER_02_ABI,
-      functionName: 'exactInputSingle',
-      args: [
-        {
-          tokenIn: chainConfig.tokens.usdc,
-          tokenOut,
-          fee: feeTier,
-          recipient,
-          amountIn: amountUsdc,
-          amountOutMinimum: 0n,
-          sqrtPriceLimitX96: 0n,
-        },
-      ],
-    });
-
+  private initRecord(ctx: ExecutionContext): ExecutionRecord {
     return {
-      executions: [
-        {
-          target: chainConfig.tokens.usdc,
-          value: '0',
-          data: approveCalldata,
-        },
-        {
-          target: chainConfig.dex.swapRouter02,
-          value: '0',
-          data: swapCalldata,
-        },
-      ],
-      aiContext,
-      newsContext,
+      executionId: randomUUID(),
+      executedAt: new Date(),
+      status: 'pending',
+      trigger: ctx.trigger,
+      spend: ctx.spend,
+      aiContext: ctx.aiContext,
+      newsContext: ctx.newsContext,
     };
   }
 
-  async buildGmExecutions(
-    _installation: Installation,
-    chainConfig: ChainConfig,
-  ): Promise<OneShotExecution[]> {
-    const gmCalldata = encodeFunctionData({
-      abi: GM_ABI,
-      functionName: 'gm',
-      args: [],
-    });
+  private async recordFailure(
+    installationId: string,
+    record: ExecutionRecord,
+    err: Error,
+    reservationId?: string,
+  ): Promise<void> {
+    record.status = 'failed';
+    record.completedAt = new Date();
+    record.errorMessage = err.message;
 
-    return [
-      {
-        target: chainConfig.skillContracts.gmContract,
-        value: '0',
-        data: gmCalldata,
-      },
-    ];
+    if (reservationId) {
+      await this.spendReservationsService.releaseReservation(reservationId);
+    }
+
+    await this.installationsService.appendExecution(installationId, record);
+    this.logger.error(`Submission failed installation=${installationId}: ${err.message}`);
   }
 
-  private async pollAndRecord(
+  private async pollAndFinalize(
     installationId: string,
     executionId: string,
     taskId: `0x${string}`,
+    isSponsored: boolean,
+    chainId: number,
     reservationId?: string,
   ): Promise<void> {
     try {
-      const finalStatus: OneShotStatus = await this.oneShotService.poll(taskId);
+      const finalStatus = await this.oneShotService.poll(taskId);
+      const confirmed = finalStatus.status === 200;
 
       if (reservationId) {
-        if (finalStatus.status === 200) {
-          await this.spendReservationsService.confirmReservation(reservationId);
-        } else {
-          await this.spendReservationsService.releaseReservation(reservationId);
-        }
+        confirmed
+          ? await this.spendReservationsService.confirmReservation(reservationId)
+          : await this.spendReservationsService.releaseReservation(reservationId);
+      }
+
+      if (confirmed && isSponsored) {
+        void this.sponsorService.recordSuccessfulExecution(chainId).catch((err: Error) => {
+          this.logger.warn(`Failed to record sponsor spend: ${err.message}`);
+        });
       }
 
       await this.installationsService.updateExecution(installationId, executionId, {
-        status: finalStatus.status === 200 ? 'confirmed' : 'failed',
+        status: confirmed ? 'confirmed' : 'failed',
         completedAt: new Date(),
         txHash: finalStatus.hash,
-        errorMessage: finalStatus.status !== 200 ? finalStatus.message : undefined,
+        errorMessage: confirmed ? undefined : finalStatus.message,
       });
     } catch (err) {
       if (reservationId) {
         await this.spendReservationsService.releaseReservation(reservationId);
       }
-
       await this.installationsService.updateExecution(installationId, executionId, {
         status: 'failed',
         completedAt: new Date(),
         errorMessage: (err as Error).message,
       });
-
-      this.logger.error(
-        `1Shot poll failed for ${installationId} task=${taskId}: ${(err as Error).message}`,
-      );
+      throw err;
     }
   }
 }

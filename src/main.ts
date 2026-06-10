@@ -2,7 +2,6 @@ import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { join } from 'node:path';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -36,19 +35,10 @@ async function bootstrap(): Promise<void> {
     origin: parseCorsOrigins(),
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'X-402-Payment'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-pimlico-key', 'X-402-Payment'],
     exposedHeaders: ['PAYMENT-REQUIRED'],
     maxAge: 86400,
   });
-
-  app.useStaticAssets(join(process.cwd(), 'public', 'proof-app'), {
-    prefix: '/proof-app',
-    setHeaders: (res, path) => {
-      if (path.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-cache')
-      }
-    },
-  })
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('SkillWallet Backend API')
@@ -66,8 +56,12 @@ async function bootstrap(): Promise<void> {
     .addTag('Executor', 'Executor EVM account read APIs')
     .addTag('Skills', 'Skill catalog and admin CRUD')
     .addTag('Installations', 'Prepare, sign, confirm, and manage user skill installations')
+    .addApiKey(
+      { type: 'apiKey', name: 'x-pimlico-key', in: 'header' },
+      'pimlico-api-key',
+    )
     .addTag('Admin', 'Admin-only operations (seed skills, trigger executions)')
-    .addTag('Proof', 'Local backend full-flow demo harness')
+    .addTag('Pimlico', 'Pimlico ERC-4337 bundler + ERC-7677 paymaster endpoints')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
@@ -81,7 +75,6 @@ async function bootstrap(): Promise<void> {
   Logger.log(`SkillWallet Backend running on http://0.0.0.0:${port}/`, 'Bootstrap');
   Logger.log(`Health endpoint:        http://0.0.0.0:${port}/health`, 'Bootstrap');
   Logger.log(`API docs:               http://0.0.0.0:${port}/docs`, 'Bootstrap');
-  Logger.log(`Proof test harness:     http://0.0.0.0:${port}/proof`, 'Bootstrap');
 }
 
 bootstrap().catch((err) => {

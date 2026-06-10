@@ -22,8 +22,8 @@ export const DCA_DAILY_SCOPE = {
 export function buildSkill(overrides: Partial<Skill> = {}): Skill {
   return {
     name: 'DCA Daily',
-    skillId: 'generic-dca-84532',
-    description: 'Daily DCA',
+    skillId: 'custom-cron-dca-84532',
+    description: 'Custom Cron DCA',
     iconUrl: 'https://example.com/icon.png',
     runType: 'cron',
     cronExpression: '0 0 * * *',
@@ -63,7 +63,7 @@ export function buildSkill(overrides: Partial<Skill> = {}): Skill {
 export function buildInstallation(overrides: Partial<Installation> = {}): Installation {
   return {
     userAddress: TEST_USER,
-    skillId: 'generic-dca-84532',
+    skillId: 'custom-cron-dca-84532',
     signedDelegation: {
       delegate: TEST_EXECUTOR,
       delegator: TEST_SMART_ACCOUNT,

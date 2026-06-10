@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { parseExpression } from 'cron-parser';
 import { getAddress } from 'viem';
 import type {
   SkillParameterDefinition,
@@ -10,12 +11,14 @@ import type {
 export type NormalizedSkillParameters = Record<string, unknown>;
 
 export function validateSkillParameters(
-  definitions: SkillParameterDefinition[] | undefined,
-  input: SkillParameterInputPayload | undefined,
+  definitions: SkillParameterDefinition[],
+  input: SkillParameterInputPayload,
 ): NormalizedSkillParameters {
   const parameterDefinitions = definitions ?? [];
   const provided = normalizeParameterInput(input);
-  const definitionByKey = new Map(parameterDefinitions.map((definition) => [definition.key, definition]));
+  const definitionByKey = new Map(
+    parameterDefinitions.map((definition) => [definition.key, definition]),
+  );
 
   for (const key of Object.keys(provided)) {
     if (!definitionByKey.has(key)) {
@@ -53,7 +56,9 @@ export function normalizeParameterInput(
 
     for (const entry of input) {
       if (!isParameterInput(entry)) {
-        throw new BadRequestException('Skill parameters must be an array of { key, value } entries');
+        throw new BadRequestException(
+          'Skill parameters must be an array of { key, value } entries',
+        );
       }
 
       if (Object.prototype.hasOwnProperty.call(normalized, entry.key)) {
@@ -66,9 +71,13 @@ export function normalizeParameterInput(
     return normalized;
   }
 
-  if (typeof input === 'object') return { ...input };
+  if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+    return input as NormalizedSkillParameters;
+  }
 
-  throw new BadRequestException('Skill parameters must be an object or an array of { key, value } entries');
+  throw new BadRequestException(
+    'Skill parameters must be an object or an array of { key, value } entries',
+  );
 }
 
 function validateParameterValue(
@@ -156,6 +165,22 @@ function validateParameterValue(
       }
 
       return getAddress(rawValue);
+    }
+
+    case 'cron': {
+      if (typeof rawValue !== 'string') {
+        throw new BadRequestException(`Skill parameter ${key} must be a string`);
+      }
+
+      try {
+        parseExpression(rawValue);
+      } catch {
+        throw new BadRequestException(
+          `Skill parameter ${key} is not a valid cron expression: ${rawValue}`,
+        );
+      }
+
+      return rawValue;
     }
 
     default: {

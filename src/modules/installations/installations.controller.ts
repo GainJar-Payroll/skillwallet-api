@@ -87,10 +87,7 @@ export class InstallationsController {
   @ApiParam({ name: 'id', description: 'Installation Mongo ObjectId' })
   @ApiOkResponse({ description: 'Execution history in reverse chronological order' })
   async findExecutions(@Param('id') id: string) {
-    return {
-      installationId: id,
-      data: await this.installations.findExecutions(id),
-    };
+    return this.installations.findExecutions(id);
   }
 
   @Patch(':id/pause')

@@ -25,23 +25,14 @@ import {
 } from './proof-helpers';
 
 /**
- * test/proof/proof.ts
+ * test/proof/proof-custom-cron-dca.ts
  *
- * No Pimlico version.
+ * Proof for the Custom Cron DCA skill (custom-cron-dca-84532).
  *
- * This proof assumes the Hybrid Smart Account is already deployed.
- * Deployment is not done here because Hybrid SA deploy is ERC-4337 UserOperation flow.
- *
- * 1Shot is used by backend runtime when:
- *   POST /admin/installations/:id/trigger
- *
- * Current backend flow:
- *   GET  /admin/executor                         x-api-key required
- *   GET  /skills
- *   POST /installations/prepare
- *   POST /installations/confirm
- *   POST /admin/installations/:id/trigger        x-api-key required
- *   GET  /installations/:id
+ * Same flow as proof-ai-dca.ts but:
+ *   1. Targets the Custom Cron DCA skill specifically
+ *   2. Uses "every 2 seconds" cron expression for instant admin trigger
+ *   3. No AI context verification (custom cron DCA has no AI analysis)
  *
  * Required env:
  *   PORT
@@ -49,25 +40,24 @@ import {
  *   BASE_SEPOLIA_RPC_URL
  *   DEFAULT_CHAIN_ID
  *   PROOF_PRIVATE_KEY
- *   ONESHOT_RELAYER_URL                          optional, defaults to 1Shot dev relayer
- *
- * Removed:
- *   PIMLICO_BUNDLER_URL
- *   SPONSORSHIP_POLICY_ID
+ *   ONESHOT_RELAYER_URL                   optional, defaults to 1Shot dev relayer
  *
  * Important:
  * - Delegation delegator MUST be Hybrid Smart Account address.
  * - Delegation delegate MUST be 1Shot relayer targetAddress.
  * - The executor EOA is NOT the delegation delegate for 1Shot flow.
+ * - SKILL_ID_TARGET defaults to custom-cron-dca-84532, override via env.
  */
 
 const PORT = Number(process.env.PORT ?? '3000');
 const API_BASE_URL = `http://localhost:${PORT}`;
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
-const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL;
+const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL!;
 const DEFAULT_CHAIN_ID = Number(process.env.DEFAULT_CHAIN_ID ?? '84532');
 const PROOF_PRIVATE_KEY = process.env.PROOF_PRIVATE_KEY! as Hex;
+
+const SKILL_ID_TARGET = process.env.SKILL_ID_TARGET ?? 'custom-cron-dca-84532';
 
 const ONESHOT_RELAYER_URL =
   process.env.ONESHOT_RELAYER_URL ??
@@ -481,11 +471,12 @@ function getSkillIdentifier(skill: any) {
   return skill?.skillId;
 }
 
-function selectSkill(skills: any[]) {
-  const bySkillId = skills.find((skill) => skill.skillId == `generic-dca-${DEFAULT_CHAIN_ID}`);
-  if (bySkillId) return bySkillId;
-
-  return skills[0];
+function findSkillById(skills: any[], targetId: string) {
+  const found = skills.find((skill) => skill.skillId === targetId);
+  if (!found) {
+    throw new Error(`Skill ${targetId} not found in /skills response`);
+  }
+  return found;
 }
 
 function buildDcaConfig(smartAccountAddress: Address, selectedSkill: any) {
@@ -672,21 +663,6 @@ function normalizeSignedDelegation(delegation: any, signature: Hex) {
   };
 }
 
-async function maybeGetAdminExecutor() {
-  try {
-    const executor = await requestJson<any>('/admin/executor', {
-      method: 'GET',
-      headers: adminHeaders(),
-    });
-
-    log('ADMIN_EXECUTOR_LOADED', executor);
-    return executor;
-  } catch (err) {
-    log('ADMIN_EXECUTOR_LOAD_FAILED_NON_FATAL', errorDetails(err));
-    return null;
-  }
-}
-
 async function assertHybridAlreadyDeployed(smartAccountAddress: Address) {
   const code = await publicClient.getCode({ address: smartAccountAddress });
   const deployed = Boolean(code && code !== '0x');
@@ -775,7 +751,7 @@ async function pollInstallationAfterTrigger(params: {
 }
 
 async function main() {
-  step('SkillWallet proof.ts — no Pimlico: prepare → confirm → admin trigger');
+  step('Proof: Custom Cron DCA — prepare → confirm → admin trigger → verify execution');
 
   log('CONFIG', {
     API_BASE_URL,
@@ -784,7 +760,7 @@ async function main() {
     ONESHOT_RELAYER_URL: redactUrl(ONESHOT_RELAYER_URL),
     DEFAULT_CHAIN_ID,
     PROOF_PRIVATE_KEY: 'REDACTED',
-    // PREFERRED_SKILL_ID,
+    SKILL_ID_TARGET,
     DEPLOY_SALT,
     USDC,
     WETH,
@@ -803,18 +779,8 @@ async function main() {
   await assertCode('WETH', WETH);
   await assertCode('SwapRouter02', SWAP_ROUTER_02);
 
-  const adminExecutor = await maybeGetAdminExecutor();
-
   const oneShotChainInfo = await getOneShotChainInfo(DEFAULT_CHAIN_ID);
   const oneShotTargetAddress = getAddress(oneShotChainInfo.targetAddress!);
-
-  log('ONESHOT_CHAIN_INFO_LOADED', {
-    chainId: DEFAULT_CHAIN_ID,
-    oneShotChainInfo,
-    oneShotTargetAddress,
-    adminExecutorAddress: adminExecutor?.address,
-    note: 'Delegation delegate must equal oneShotTargetAddress, not admin executor EOA.',
-  });
 
   step('1. Load owner from PROOF_PRIVATE_KEY');
 
@@ -854,14 +820,14 @@ async function main() {
 
   await assertHybridAlreadyDeployed(smartAccountAddress);
 
-  step('4. GET /skills and select existing skill document');
+  step('4. GET /skills and select Custom Cron DCA skill');
 
   const skillsBody = await requestJson<any>('/skills');
   const skills = normalizeSkillsResponse(skillsBody);
 
   log('SKILLS_LOADED', { count: skills.length, skills });
 
-  const selectedSkill = selectSkill(skills);
+  const selectedSkill = findSkillById(skills, SKILL_ID_TARGET);
   if (!selectedSkill) throw new Error('No skill found from /skills');
 
   const skillId = getSkillIdentifier(selectedSkill);
@@ -870,20 +836,21 @@ async function main() {
   }
 
   log('SKILL_SELECTED_FROM_BACKEND', {
-    // preferred: PREFERRED_SKILL_ID,
+    target: SKILL_ID_TARGET,
     selectedIdentifier: skillId,
     selectedSkill,
   });
 
   step('4a. Client-side validate chosen parameters against skill.parameters');
 
-  const dcaConfig = buildDcaConfig(smartAccountAddress, selectedSkill);
+  const skillDefinitions = getSkillParameterDefinitions(selectedSkill);
+
   const dcaParameters = [
+    { key: 'cronSchedule', value: '*/2 * * * * *' },
     { key: 'outputToken', value: 'weth' },
     { key: 'amountUsdc', value: AMOUNT_IN_USDC_ATOMS },
   ];
 
-  const skillDefinitions = getSkillParameterDefinitions(selectedSkill);
   let normalizedParameters: Record<string, unknown>;
   try {
     normalizedParameters = validateParametersClientSide(skillDefinitions, dcaParameters);
@@ -937,116 +904,102 @@ async function main() {
   if (existing) {
     installationId = getInstallationId(existing);
     if (!installationId) {
-      throw new Error(
-        `Existing installation has no id: ${stringify(existing)}`,
-      );
+      throw new Error(`Existing installation has no id: ${stringify(existing)}`);
     }
     log('SKIPPING_PREPARE_CONFIRM_INSTALLATION_ALREADY_PRESENT', {
       skillId,
       installationId,
       status: existing.status,
     });
-  } else try {
-    const prepared = await requestJson<PrepareResponse>('/installations/prepare', {
-      method: 'POST',
-      body: JSON.stringify(prepareInput),
-    });
-
-    log('PREPARE_DONE', {
-      input: prepareInput,
-      prepared,
-      detectedShape: prepared.delegation
-        ? 'prepared.delegation'
-        : prepared.delegate && prepared.delegationScope
-          ? 'prepared.delegate + prepared.delegationScope'
-          : 'unknown',
-    });
-
-    if (prepared.executorAddress && adminExecutor?.address) {
-      const preparedExecutor = getAddress(prepared.executorAddress);
-      const adminExecutorAddress = getAddress(adminExecutor.address);
-
-      if (preparedExecutor !== adminExecutorAddress) {
-        log('EXECUTOR_ADDRESS_MISMATCH_WARNING', {
-          preparedExecutor,
-          adminExecutorAddress,
-          note: 'If this is unexpected, backend may have restarted with a different EXECUTOR_PRIVATE_KEY.',
-        });
-      }
-    }
-
-    step('6. Build and sign delegation');
-
-    const { source, delegation } = buildDelegationToSign({
-      prepared,
-      smartAccount,
-      smartAccountAddress,
-      oneShotTargetAddress,
-    });
-
-    log('DELEGATION_TO_SIGN', { source, delegation });
-
-    let delegationSignature: Hex;
-
+  } else
     try {
-      delegationSignature = await smartAccount.signDelegation({
-        delegation: delegation as any,
+      const prepared = await requestJson<PrepareResponse>('/installations/prepare', {
+        method: 'POST',
+        body: JSON.stringify(prepareInput),
       });
 
-      log('DELEGATION_SIGNATURE_OK', {
-        signature: delegationSignature,
-        signaturePrefix: `${delegationSignature.slice(0, 22)}…`,
+      log('PREPARE_DONE', {
+        input: prepareInput,
+        prepared,
+        detectedShape: prepared.delegation
+          ? 'prepared.delegation'
+          : prepared.delegate && prepared.delegationScope
+            ? 'prepared.delegate + prepared.delegationScope'
+            : 'unknown',
       });
+
+      step('6. Build and sign delegation');
+
+      const { source, delegation } = buildDelegationToSign({
+        prepared,
+        smartAccount,
+        smartAccountAddress,
+        oneShotTargetAddress,
+      });
+
+      log('DELEGATION_TO_SIGN', { source, delegation });
+
+      let delegationSignature: Hex;
+
+      try {
+        delegationSignature = await smartAccount.signDelegation({
+          delegation: delegation as any,
+        });
+
+        log('DELEGATION_SIGNATURE_OK', {
+          signature: delegationSignature,
+          signaturePrefix: `${delegationSignature.slice(0, 22)}…`,
+        });
+      } catch (err) {
+        log('DELEGATION_SIGNATURE_FAILED', errorDetails(err));
+        throw err;
+      }
+
+      const signedDelegation = normalizeSignedDelegation(delegation, delegationSignature);
+
+      log('SIGNED_DELEGATION_NORMALIZED', signedDelegation);
+
+      step('7. POST /installations/confirm');
+
+      const delegationSalt = prepared.salt ?? prepared.delegation?.salt;
+
+      if (!delegationSalt) {
+        throw new Error(`prepare did not return salt/delegation.salt: ${stringify(prepared)}`);
+      }
+
+      const confirmInput = {
+        userAddress: owner,
+        smartAccountAddress,
+        chainId: DEFAULT_CHAIN_ID,
+        skillId,
+        signedDelegation,
+        delegationSalt,
+        parameters: dcaParameters,
+      };
+
+      const confirmed = await requestJson<InstallationResponse>('/installations/confirm', {
+        method: 'POST',
+        body: JSON.stringify(confirmInput),
+      });
+
+      installationId = getInstallationId(confirmed);
+
+      log('CONFIRM_DONE', {
+        confirmInput,
+        confirmed,
+        installationId,
+      });
+
+      if (!installationId) {
+        throw new Error(`confirm did not return installation id: ${stringify(confirmed)}`);
+      }
     } catch (err) {
-      log('DELEGATION_SIGNATURE_FAILED', errorDetails(err));
-      throw err;
+      const existingInstallationId = getAlreadyInstalledId(err);
+      if (!existingInstallationId) throw err;
+
+      installationId = existingInstallationId;
+      log('INSTALLATION_ALREADY_EXISTS_REUSED', { installationId, error: errorDetails(err) });
     }
-
-    const signedDelegation = normalizeSignedDelegation(delegation, delegationSignature);
-
-    log('SIGNED_DELEGATION_NORMALIZED', signedDelegation);
-
-    step('7. POST /installations/confirm');
-
-    const delegationSalt = prepared.salt ?? prepared.delegation?.salt;
-
-    if (!delegationSalt) {
-      throw new Error(`prepare did not return salt/delegation.salt: ${stringify(prepared)}`);
-    }
-
-    const confirmInput = {
-      userAddress: owner,
-      smartAccountAddress,
-      chainId: DEFAULT_CHAIN_ID,
-      skillId,
-      signedDelegation,
-      delegationSalt,
-      parameters: dcaParameters,
-    };
-
-    const confirmed = await requestJson<InstallationResponse>('/installations/confirm', {
-      method: 'POST',
-      body: JSON.stringify(confirmInput),
-    });
-
-    installationId = getInstallationId(confirmed);
-
-    log('CONFIRM_DONE', {
-      confirmInput,
-      confirmed,
-      installationId,
-    });
-
-    if (!installationId) {
-      throw new Error(`confirm did not return installation id: ${stringify(confirmed)}`);
-    }
-  } catch (err) {
-    const existingInstallationId = getAlreadyInstalledId(err);
-    if (!existingInstallationId) throw err;
-
-    installationId = existingInstallationId;
-    log('INSTALLATION_ALREADY_EXISTS_REUSED', { installationId, error: errorDetails(err) });
-  }
 
   step('8. GET /installations/:id before trigger');
 
@@ -1129,6 +1082,7 @@ async function main() {
   log('SUMMARY', {
     owner,
     smartAccountAddress,
+    targetSkillId: SKILL_ID_TARGET,
     selectedSkillId: skillId,
     installationId,
     triggerResult,

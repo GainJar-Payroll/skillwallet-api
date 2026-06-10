@@ -5,10 +5,17 @@ import {
   SpendReservation,
   SpendReservationSchema,
 } from './schemas/spend-reservation.schema';
+import {
+  DailySpendCounter,
+  DailySpendCounterSchema,
+} from './schemas/daily-spend-counter.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: SpendReservation.name, schema: SpendReservationSchema }]),
+    MongooseModule.forFeature([
+      { name: SpendReservation.name, schema: SpendReservationSchema },
+      { name: DailySpendCounter.name, schema: DailySpendCounterSchema },
+    ]),
   ],
   providers: [SpendReservationsService],
   exports: [SpendReservationsService, MongooseModule],

@@ -8,22 +8,18 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
-import type {
-  SkillExecutionConfig,
-  SkillLimitsConfig,
-  SkillRunType,
-  SkillTriggerConfig,
-} from '../skill-config.types';
+import type { AISkillConfig, SkillLimitsConfig, SkillRunType, SkillTriggerConfig, X402ServiceConfig } from '../skill-config.types';
 import type { SkillParameterDefinition } from '../skill-parameter.types';
+import { DelegationScopeConfig, DelegationScopeMetaItem, Skill } from '../schemas/skill.schema';
 
-export class CreateSkillDto {
-  @ApiProperty({ description: 'Display name of the skill', example: 'Generic DCA' })
+export class CreateSkillDto extends Skill {
+  @ApiProperty({ description: 'Display name of the skill', example: 'Custom Cron DCA' })
   @IsString()
   name!: string;
 
   @ApiProperty({
     description: 'Unique identifier for the skill + Chain Id',
-    example: 'generic-dca-84532',
+    example: 'custom-cron-dca-84532',
   })
   @IsString()
   skillId!: string;
@@ -52,39 +48,13 @@ export class CreateSkillDto {
   runType!: SkillRunType;
 
   @ApiPropertyOptional({
-    description: 'cron expression for cron-based skills (5-field Unix cron)',
-    example: '0 9 * * *',
-  })
-  @IsOptional()
-  @IsString()
-  cronExpression?: string;
-
-  @ApiPropertyOptional({
-    description: 'Event trigger configuration for event-trigger skills',
+    description: 'Trigger configuration for cron or event-trigger skills',
     type: 'object',
     additionalProperties: true,
   })
   @IsOptional()
   @IsObject()
-  eventTriggerConfig?: Record<string, unknown>;
-
-  @ApiPropertyOptional({
-    description: 'Normalized trigger configuration for cron or event-trigger skills',
-    type: 'object',
-    additionalProperties: true,
-  })
-  @IsOptional()
-  @IsObject()
-  trigger?: SkillTriggerConfig;
-
-  @ApiPropertyOptional({
-    description: 'Normalized execution configuration used by the runner',
-    type: 'object',
-    additionalProperties: true,
-  })
-  @IsOptional()
-  @IsObject()
-  execution?: SkillExecutionConfig;
+  trigger!: SkillTriggerConfig;
 
   @ApiProperty({ description: 'EVM chain id where the skill runs', example: 84532 })
   @IsNumber()
@@ -97,7 +67,17 @@ export class CreateSkillDto {
     additionalProperties: true,
   })
   @IsObject()
-  delegationScope!: Record<string, unknown>;
+  delegationScope!: DelegationScopeConfig;
+
+  @ApiPropertyOptional({
+    description:
+      'Human-readable metadata for each delegation scope target (same index as delegationScope.targets[]). FE can loop and render contract info alongside each scope item.',
+    type: 'array',
+    items: { type: 'object', additionalProperties: true },
+  })
+  @IsOptional()
+  @IsArray()
+  delegationScopeMeta?: DelegationScopeMetaItem[];
 
   @ApiPropertyOptional({
     description: 'Optional runtime limits for execution frequency or spend caps',
@@ -115,7 +95,7 @@ export class CreateSkillDto {
   })
   @IsOptional()
   @IsArray()
-  parameters?: SkillParameterDefinition[];
+  parameters!: SkillParameterDefinition[];
 
   @ApiPropertyOptional({
     description: 'Free-form metadata (category, kind, risk, builtin flag, etc.)',
@@ -124,10 +104,28 @@ export class CreateSkillDto {
   })
   @IsOptional()
   @IsObject()
-  metadata?: Record<string, unknown>;
+  metadata!: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'x402-payable API services the skill consumes. Each fetches data via on-chain payment protocol.',
+    type: 'array',
+    items: { type: 'object', additionalProperties: true },
+  })
+  @IsOptional()
+  @IsArray()
+  x402Services?: X402ServiceConfig[];
+
+  @ApiPropertyOptional({
+    description: 'AI analysis config. When set, the runner feeds x402 outputs + params + history to the AI before each execution. AI can gate the execution via structured decision.',
+    type: 'object',
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @IsObject()
+  aiConfig?: AISkillConfig;
 
   @ApiPropertyOptional({ description: 'Whether the skill is currently listed', example: true })
   @IsOptional()
   @IsBoolean()
-  isActive?: boolean;
+  isActive!: boolean;
 }

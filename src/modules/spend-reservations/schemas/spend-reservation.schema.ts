@@ -21,8 +21,12 @@ export class SpendReservation {
 
   @Prop({ type: String, required: true, enum: ['reserved', 'confirmed', 'released'], index: true })
   status!: SpendReservationStatus;
+
+  @Prop({ type: Date })
+  expiresAt?: Date;
 }
 
 export const SpendReservationSchema = SchemaFactory.createForClass(SpendReservation);
 
 SpendReservationSchema.index({ installationId: 1, tokenAddress: 1, periodKey: 1, status: 1 });
+SpendReservationSchema.index({ periodKey: 1, status: 1 });

@@ -8,9 +8,10 @@ import {
   type Delegation,
 } from '@metamask/smart-accounts-kit';
 import { OneShotService } from '../oneshot/oneshot.service';
-import { Skill, DelegationScopeConfig } from '../skills/schemas/skill.schema';
+import type { Skill, DelegationScopeConfig } from '../skills/schemas/skill.schema';
 
-const HEX_BIGINT_FIELDS: Array<string | string[]> = [
+/** Fields stored as hex strings in Mongo that must be re-hydrated to bigint before signing */
+const BIGINT_HEX_FIELDS: Array<string | [parent: string, child: string]> = [
   'maxAmount',
   'periodAmount',
   ['valueLte', 'maxValue'],
@@ -30,12 +31,11 @@ export class DelegationService {
     salt: `0x${string}`,
   ): Promise<Delegation> {
     const environment = getSmartAccountsEnvironment(skill.chainId);
-    const oneShotTargetAddress = await this.getOneShotTargetAddress(skill.chainId);
-
+    const targetAddress = await this.fetchTargetAddress(skill.chainId);
     const scope = this.deserialiseScope(skill.delegationScope);
 
     return createDelegation({
-      to: oneShotTargetAddress,
+      to: targetAddress,
       from: viemGetAddress(smartAccountAddress) as `0x${string}`,
       environment,
       salt,
@@ -43,54 +43,77 @@ export class DelegationService {
     });
   }
 
-  async getOneShotTargetAddress(chainId: number): Promise<`0x${string}`> {
+  validateDelegationShape(
+    delegation: Record<string, unknown>,
+    expectedSmartAccountAddress: `0x${string}`,
+    expectedDelegate?: `0x${string}`,
+  ): void {
+    if (!delegation.signature || delegation.signature === '0x') {
+      throw new Error('Missing delegation signature');
+    }
+
+    const delegator = viemGetAddress(delegation.delegator as string);
+    if (delegator !== viemGetAddress(expectedSmartAccountAddress)) {
+      throw new Error(
+        `Delegation delegator mismatch: got=${delegator} expected=${viemGetAddress(expectedSmartAccountAddress)}`,
+      );
+    }
+
+    if (expectedDelegate) {
+      const delegate = viemGetAddress(delegation.delegate as string);
+      if (delegate !== viemGetAddress(expectedDelegate)) {
+        throw new Error(
+          `Delegation delegate mismatch: got=${delegate} expected=${viemGetAddress(expectedDelegate)}`,
+        );
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private
+  // ---------------------------------------------------------------------------
+
+  private async fetchTargetAddress(chainId: number): Promise<`0x${string}`> {
     const capabilities = await this.oneShotService.getCapabilities(chainId);
     const chainKey = String(chainId);
 
-    const direct = capabilities?.[chainKey] as
-      | {
-          targetAddress?: string;
-          feeCollector?: string;
-          tokens?: unknown[];
-        }
-      | undefined;
-
+    // Response shape: { [chainId]: { targetAddress, feeCollector, ... } }
+    const direct = capabilities[chainKey] as { targetAddress?: string } | undefined;
     if (direct?.targetAddress) {
       return viemGetAddress(direct.targetAddress) as `0x${string}`;
     }
 
-    const chains = (capabilities as { chains?: Array<Record<string, unknown>> })?.chains ?? [];
-    const found = chains.find((item) => String(item.chainId) === chainKey);
-
+    // Fallback: some API versions return { chains: [...] }
+    const chains = (capabilities as { chains?: Array<Record<string, unknown>> }).chains ?? [];
+    const found = chains.find((c) => String(c.chainId) === chainKey);
     if (typeof found?.targetAddress === 'string') {
       return viemGetAddress(found.targetAddress) as `0x${string}`;
     }
 
     throw new Error(
-      `1Shot capabilities missing targetAddress for chainId=${chainId}: ${JSON.stringify(
-        capabilities,
-      )}`,
+      `1Shot capabilities missing targetAddress for chainId=${chainId}: ${JSON.stringify(capabilities)}`,
     );
   }
 
-  deserialiseScope(stored: DelegationScopeConfig): unknown {
+  /**
+   * Re-hydrates bigint fields from their hex-string DB representation
+   * back to native bigints before passing the scope to createDelegation().
+   */
+  private deserialiseScope(stored: DelegationScopeConfig): unknown {
     const scopeType = (ScopeType as unknown as Record<string, string>)[stored.type] ?? stored.type;
-    const result: Record<string, unknown> = { ...stored, type: scopeType };
+    const scope: Record<string, unknown> = { ...stored, type: scopeType };
 
-    for (const field of HEX_BIGINT_FIELDS) {
+    for (const field of BIGINT_HEX_FIELDS) {
       if (typeof field === 'string') {
-        const val = result[field];
-
+        const val = scope[field];
         if (typeof val === 'string' && val.startsWith('0x')) {
-          result[field] = BigInt(val);
+          scope[field] = BigInt(val);
         }
       } else {
         const [parent, child] = field;
-        const container = result[parent] as Record<string, unknown> | undefined;
-
+        const container = scope[parent] as Record<string, unknown> | undefined;
         if (
-          container &&
-          typeof container[child] === 'string' &&
+          typeof container?.[child] === 'string' &&
           (container[child] as string).startsWith('0x')
         ) {
           container[child] = BigInt(container[child] as string);
@@ -98,36 +121,6 @@ export class DelegationService {
       }
     }
 
-    return result;
-  }
-
-  validateDelegationShape(
-    delegation: Record<string, unknown>,
-    expectedSmartAccountAddress: `0x${string}`,
-    expectedDelegate?: `0x${string}`,
-  ): void {
-    if (!delegation.signature || (delegation.signature as string) === '0x') {
-      throw new Error('Missing delegation signature');
-    }
-
-    const delegator = viemGetAddress(delegation.delegator as string);
-    const expectedDelegator = viemGetAddress(expectedSmartAccountAddress);
-
-    if (delegator !== expectedDelegator) {
-      throw new Error(
-        `Delegation delegator does not match smartAccountAddress. got=${delegator}, expected=${expectedDelegator}`,
-      );
-    }
-
-    if (expectedDelegate) {
-      const delegate = viemGetAddress(delegation.delegate as string);
-      const expected = viemGetAddress(expectedDelegate);
-
-      if (delegate !== expected) {
-        throw new Error(
-          `Delegation delegate does not match 1Shot targetAddress. got=${delegate}, expected=${expected}`,
-        );
-      }
-    }
+    return scope;
   }
 }
