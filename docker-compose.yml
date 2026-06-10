@@ -1,6 +1,6 @@
 services:
   app:
-    build: .
+    image: ghcr.io/gainjar-payroll/mbg-api:latest
     ports:
       - "4000:4000"
     env_file:
