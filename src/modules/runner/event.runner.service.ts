@@ -1,12 +1,6 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ExecutorService } from '../executor/executor.service';
-import { normalizeSkillTrigger } from '../skills/skill-config.util';
 import { Skill } from '../skills/schemas/skill.schema';
 import { SkillsService } from '../skills/skills.service';
 import { parseTriggerEventAbi } from './event-abi';
@@ -44,11 +38,11 @@ export class EventRunnerService implements OnModuleInit, OnModuleDestroy {
 
   private async startWatchers(): Promise<void> {
     const skills = (await this.skillsService.findAll(true)) as Array<WithId<Skill>>;
-    const eventSkills = skills.filter((skill) => normalizeSkillTrigger(skill)?.type === 'event-trigger');
+    const eventSkills = skills.filter((skill) => skill.trigger?.type === 'event-trigger');
     const groupedWatchers = new Map<string, Array<WithId<Skill>>>();
 
     for (const skill of eventSkills) {
-      const trigger = normalizeSkillTrigger(skill);
+      const trigger = skill.trigger;
       if (!trigger || trigger.type !== 'event-trigger') continue;
 
       const key = `${trigger.chainId ?? skill.chainId}:${trigger.contractAddress.toLowerCase()}:${trigger.eventSignature}`;
@@ -57,11 +51,13 @@ export class EventRunnerService implements OnModuleInit, OnModuleDestroy {
 
     for (const groupedSkills of groupedWatchers.values()) {
       const firstSkill = groupedSkills[0];
-      const trigger = normalizeSkillTrigger(firstSkill);
+      const trigger = firstSkill.trigger;
       if (!trigger || trigger.type !== 'event-trigger') continue;
 
       try {
-        const publicClient = this.executorService.getPublicClient(trigger.chainId ?? firstSkill.chainId);
+        const publicClient = this.executorService.getPublicClient(
+          trigger.chainId ?? firstSkill.chainId,
+        );
         const unwatch = publicClient.watchEvent({
           address: trigger.contractAddress as `0x${string}`,
           event: parseTriggerEventAbi(trigger.eventSignature),

@@ -69,3 +69,18 @@ export function getChainConfig(chainId: number): ChainConfig {
   if (!cfg) throw new Error(`Unsupported chainId: ${chainId}`);
   return cfg;
 }
+
+const CHAIN_EXPLORER_TX_URLS: Record<number, string> = {
+  84532: 'https://sepolia.basescan.org/tx/',
+  8453: 'https://basescan.org/tx/',
+};
+
+export function getExplorerTxUrl(
+  chainId: number,
+  txHash: string | undefined,
+): string | undefined {
+  if (!txHash) return undefined;
+  const base = CHAIN_EXPLORER_TX_URLS[chainId];
+  if (!base) return undefined;
+  return `${base}${txHash}`;
+}

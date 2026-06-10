@@ -1,4 +1,4 @@
-export type SkillParameterType = 'select' | 'number' | 'boolean' | 'string' | 'address';
+export type SkillParameterType = 'select' | 'number' | 'boolean' | 'string' | 'address' | 'cron';
 
 export interface SkillParameterBase {
   key: string;
@@ -54,7 +54,8 @@ export type SkillParameterDefinition =
   | SkillNumberParameterDefinition
   | SkillBooleanParameterDefinition
   | SkillStringParameterDefinition
-  | SkillAddressParameterDefinition;
+  | SkillAddressParameterDefinition
+  | SkillCronParameterDefinition;
 
 export interface SkillSelectParameterDefinition extends SkillParameterBase {
   type: 'select';
@@ -88,9 +89,14 @@ export interface SkillAddressParameterDefinition extends SkillParameterBase {
   defaultValue?: `0x${string}`;
 }
 
+export interface SkillCronParameterDefinition extends SkillParameterBase {
+  type: 'cron';
+  defaultValue?: string;
+}
+
 export interface SkillParameterInput {
   key: string;
   value: unknown;
 }
 
-export type SkillParameterInputPayload = SkillParameterInput[] | Record<string, unknown>;
+export type SkillParameterInputPayload = SkillParameterInput[];

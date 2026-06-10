@@ -7,13 +7,18 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, PopulateOptions, Types } from 'mongoose';
-import { getAddress } from 'viem';
-import { Installation, InstallationDocument, ExecutionRecord } from './schemas/installation.schema';
+import { Address, getAddress } from 'viem';
+import {
+  Installation,
+  type InstallationDocument,
+  type ExecutionRecord,
+} from './schemas/installation.schema';
 import { SkillsService } from '../skills/skills.service';
 import { DelegationService } from '../delegation/delegation.service';
-import { PrepareInstallationDto } from './dto/prepare-installation.dto';
-import { ConfirmInstallationDto } from './dto/confirm-installation.dto';
+import { type PrepareInstallationDto } from './dto/prepare-installation.dto';
+import { type ConfirmInstallationDto } from './dto/confirm-installation.dto';
 import { validateSkillParameters } from '../skills/skill-parameter-validation';
+import { getExplorerTxUrl } from '../../config/chains.config';
 
 export interface PrepareInstallationResponse {
   delegation: Record<string, unknown>;
@@ -21,6 +26,23 @@ export interface PrepareInstallationResponse {
   skillId: string;
   executorAddress: `0x${string}`;
   chainId: number;
+}
+
+export interface InstallationExecutionsResponse {
+  installationId: string;
+  chainId: number;
+  latest: ExecutionProof | null;
+  data: (ExecutionRecord & { explorerUrl?: string })[];
+}
+
+export interface ExecutionProof {
+  executionId: string | undefined;
+  status: ExecutionRecord['status'];
+  oneShotTaskId: string | undefined;
+  txHash: string | undefined;
+  explorerUrl: string | undefined;
+  executedAt: Date;
+  completedAt: Date | undefined;
 }
 
 export interface FindInstallationsOptions {
@@ -36,7 +58,8 @@ export class InstallationsService {
     localField: 'skillId',
     foreignField: 'skillId',
     justOne: true,
-    select: 'skillId name iconUrl runType chainId',
+    select:
+      'skillId name iconUrl runType chainId delegationScope delegationScopeMeta parameters trigger x402Services aiConfig',
   };
 
   constructor(
@@ -48,27 +71,20 @@ export class InstallationsService {
 
   async prepareInstallation(dto: PrepareInstallationDto): Promise<PrepareInstallationResponse> {
     const skill = await this.skillsService.findById(dto.skillId);
-
-    if (!skill.isActive) {
-      throw new BadRequestException('Skill is not active');
-    }
-
-    const userAddress = getAddress(dto.userAddress) as `0x${string}`;
-    const smartAccountAddress = getAddress(dto.smartAccountAddress) as `0x${string}`;
+    if (!skill.isActive) throw new BadRequestException('Skill is not active');
 
     await this.assertNoActiveDuplicate({
-      userAddress,
-      smartAccountAddress,
+      userAddress: dto.userAddress,
+      smartAccountAddress: dto.smartAccountAddress,
       skillId: skill.skillId,
     });
 
     validateSkillParameters(skill.parameters, dto.parameters);
 
     const salt = this.delegationService.generateSalt();
-
     const delegation = (await this.delegationService.prepare(
       skill,
-      smartAccountAddress,
+      dto.smartAccountAddress,
       salt,
     )) as unknown as Record<string, unknown>;
 
@@ -76,17 +92,14 @@ export class InstallationsService {
       delegation,
       salt,
       skillId: skill.skillId,
-      executorAddress: delegation.delegate as `0x${string}`,
+      executorAddress: delegation.delegate as Address,
       chainId: skill.chainId,
     };
   }
 
   async confirmInstallation(dto: ConfirmInstallationDto): Promise<Installation> {
     const skill = await this.skillsService.findById(dto.skillId);
-
-    if (!skill.isActive) {
-      throw new BadRequestException('Skill is not active');
-    }
+    if (!skill.isActive) throw new BadRequestException('Skill is not active');
 
     const userAddress = getAddress(dto.userAddress) as `0x${string}`;
     const smartAccountAddress = getAddress(dto.smartAccountAddress) as `0x${string}`;
@@ -99,22 +112,22 @@ export class InstallationsService {
 
     const validatedParameters = validateSkillParameters(skill.parameters, dto.parameters);
 
+    // Re-derive the expected delegation server-side to verify the client signed
+    // the correct delegation (right delegate = 1Shot targetAddress, right scope).
     const expected = (await this.delegationService.prepare(
       skill,
       smartAccountAddress,
       dto.delegationSalt as `0x${string}`,
     )) as unknown as Record<string, unknown>;
 
-    const expectedDelegate = getAddress(expected.delegate as string) as `0x${string}`;
-
     try {
       this.delegationService.validateDelegationShape(
         dto.signedDelegation,
         smartAccountAddress,
-        expectedDelegate,
+        getAddress(expected.delegate as string) as `0x${string}`,
       );
     } catch (err) {
-      throw new BadRequestException(`Invalid delegation signature: ${(err as Error).message}`);
+      throw new BadRequestException(`Invalid delegation: ${(err as Error).message}`);
     }
 
     if (
@@ -122,20 +135,6 @@ export class InstallationsService {
       (expected.salt as string)?.toLowerCase()
     ) {
       throw new BadRequestException('Delegation salt mismatch');
-    }
-
-    if (
-      getAddress(dto.signedDelegation.delegator as string) !==
-      getAddress(expected.delegator as string)
-    ) {
-      throw new BadRequestException('Delegation delegator mismatch');
-    }
-
-    if (
-      getAddress(dto.signedDelegation.delegate as string) !==
-      getAddress(expected.delegate as string)
-    ) {
-      throw new BadRequestException('Delegation delegate mismatch');
     }
 
     const created = await this.installationModel.create({
@@ -152,31 +151,22 @@ export class InstallationsService {
     return created.toObject();
   }
 
-  async findByUser(userAddress: string, options: FindInstallationsOptions = {}): Promise<Installation[]> {
-    const checksummed = getAddress(userAddress);
-
+  async findByUser(
+    userAddress: string,
+    options: FindInstallationsOptions = {},
+  ): Promise<Installation[]> {
     if (options.chainId !== undefined && !Number.isInteger(options.chainId)) {
       throw new BadRequestException('chainId must be an integer');
     }
 
-    const filter: {
-      userAddress: string;
-      chainId?: number;
-      smartAccountAddress?: string;
-    } = {
-      userAddress: checksummed,
-    };
-
-    if (options.chainId !== undefined) {
-      filter.chainId = options.chainId;
-    }
-
-    if (options.smartAccountAddress) {
-      filter.smartAccountAddress = getAddress(options.smartAccountAddress);
-    }
-
     return this.installationModel
-      .find(filter)
+      .find({
+        userAddress: getAddress(userAddress),
+        ...(options.chainId !== undefined && { chainId: options.chainId }),
+        ...(options.smartAccountAddress && {
+          smartAccountAddress: getAddress(options.smartAccountAddress),
+        }),
+      })
       .populate(this.skillPopulate)
       .lean()
       .exec();
@@ -188,8 +178,12 @@ export class InstallationsService {
       .populate(this.skillPopulate)
       .lean()
       .exec();
-
     if (!inst) throw new NotFoundException('Installation not found');
+
+    inst.executions = (inst.executions ?? []).map((e) => ({
+      ...e,
+      explorerUrl: getExplorerTxUrl(inst.chainId, e.txHash),
+    })) as ExecutionRecord[];
 
     return inst;
   }
@@ -212,42 +206,13 @@ export class InstallationsService {
 
   async appendExecution(id: string, record: ExecutionRecord): Promise<void> {
     const doc = await this.installationModel.findById(id).exec();
-
     if (!doc) throw new NotFoundException('Installation not found');
 
     doc.executions.unshift(record);
-
-    if (doc.executions.length > 50) {
-      doc.executions = doc.executions.slice(0, 50);
-    }
+    if (doc.executions.length > 50) doc.executions = doc.executions.slice(0, 50);
 
     doc.lastExecutedAt = record.executedAt;
     doc.markModified('executions');
-
-    await doc.save();
-  }
-
-  async findExecutions(id: string): Promise<ExecutionRecord[]> {
-    const doc = await this.installationModel.findById(id).lean().exec();
-
-    if (!doc) throw new NotFoundException('Installation not found');
-
-    return doc.executions ?? [];
-  }
-
-  async updateLastExecution(id: string, patch: Partial<ExecutionRecord>): Promise<void> {
-    const doc = await this.installationModel.findById(id).exec();
-
-    if (!doc) return;
-
-    const target = doc.executions[0];
-
-    if (!target) return;
-
-    Object.assign(target, patch);
-
-    doc.markModified('executions');
-
     await doc.save();
   }
 
@@ -257,17 +222,13 @@ export class InstallationsService {
     patch: Partial<ExecutionRecord>,
   ): Promise<void> {
     const doc = await this.installationModel.findById(id).exec();
-
     if (!doc) return;
 
-    const target = doc.executions.find((execution) => execution.executionId === executionId);
-
+    const target = doc.executions.find((e) => e.executionId === executionId);
     if (!target) return;
 
     Object.assign(target, patch);
-
     doc.markModified('executions');
-
     await doc.save();
   }
 
@@ -279,7 +240,6 @@ export class InstallationsService {
 
   async findDueForExecution(): Promise<Installation[]> {
     const now = new Date();
-
     return this.installationModel
       .find({
         status: 'active',
@@ -298,9 +258,38 @@ export class InstallationsService {
     return this.installationModel.find({ status: 'active', skillId }).lean().exec();
   }
 
+  async findExecutions(id: string): Promise<InstallationExecutionsResponse> {
+    const doc = await this.installationModel.findById(id).lean().exec();
+    if (!doc) throw new NotFoundException('Installation not found');
+
+    const executions = doc.executions ?? [];
+    const latest = executions[0];
+
+    return {
+      installationId: id,
+      chainId: doc.chainId,
+      latest: latest
+        ? {
+            executionId: latest.executionId,
+            status: latest.status,
+            oneShotTaskId: latest.oneShotTaskId,
+            txHash: latest.txHash,
+            explorerUrl: getExplorerTxUrl(doc.chainId, latest.txHash),
+            executedAt: latest.executedAt,
+            completedAt: latest.completedAt,
+          }
+        : null,
+      data: executions.map((e) => ({ ...e, explorerUrl: getExplorerTxUrl(doc.chainId, e.txHash) })),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private
+  // ---------------------------------------------------------------------------
+
   private async assertNoActiveDuplicate(input: {
-    userAddress: `0x${string}`;
-    smartAccountAddress: `0x${string}`;
+    userAddress: string;
+    smartAccountAddress: string;
     skillId: string;
   }): Promise<void> {
     const existing = await this.installationModel
@@ -315,7 +304,7 @@ export class InstallationsService {
 
     if (existing) {
       throw new ConflictException(
-        `Skill is already installed for this smart account. installationId=${existing._id}`,
+        `Skill already installed for this smart account. installationId=${existing._id}`,
       );
     }
   }
@@ -326,7 +315,6 @@ export class InstallationsService {
     status: 'active' | 'paused' | 'revoked',
   ): Promise<Installation> {
     const inst = await this.installationModel.findById(id).exec();
-
     if (!inst) throw new NotFoundException('Installation not found');
 
     if (getAddress(inst.userAddress) !== getAddress(userAddress)) {
@@ -334,9 +322,7 @@ export class InstallationsService {
     }
 
     inst.status = status;
-
     await inst.save();
-
     return inst.toObject();
   }
 }

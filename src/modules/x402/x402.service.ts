@@ -1,27 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createPaymentHeader } from 'x402/client';
+import { x402Client, x402HTTPClient } from '@x402/fetch';
+import { ExactEvmScheme } from '@x402/evm';
 import { ExecutorService } from '../executor/executor.service';
-
-interface PaymentRequirements {
-  network?: string;
-  payTo?: string;
-  asset?: string;
-  scheme?: string;
-  maxAmountRequired?: string;
-  resource?: string;
-  description?: string;
-  mimeType?: string;
-  maxTimeoutSeconds?: number;
-  extra?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-  [key: string]: unknown;
-}
 
 @Injectable()
 export class X402Service {
   private readonly logger = new Logger(X402Service.name);
+  private httpClient: x402HTTPClient | null = null;
 
   constructor(private readonly executorService: ExecutorService) {}
+
+  private getHttpClient(): x402HTTPClient {
+    if (!this.httpClient) {
+      const signer = this.executorService.getAccount();
+      const coreClient = new x402Client().register(
+        'eip155:*',
+        new ExactEvmScheme(signer),
+      );
+      this.httpClient = new x402HTTPClient(coreClient);
+    }
+    return this.httpClient;
+  }
 
   async fetch<T>(url: string, options?: RequestInit): Promise<T> {
     const res1 = await fetch(url, options);
@@ -33,35 +32,51 @@ export class X402Service {
       throw new Error(`x402 unexpected status ${res1.status} from ${url}`);
     }
 
-    const paymentRequiredHeader = res1.headers.get('PAYMENT-REQUIRED');
-    if (!paymentRequiredHeader) {
-      throw new Error('x402: missing PAYMENT-REQUIRED header');
-    }
+    const paymentRequired = this.getHttpClient().getPaymentRequiredResponse(
+      (name) => res1.headers.get(name),
+      await res1.json(),
+    );
 
-    const paymentRequired = JSON.parse(paymentRequiredHeader) as {
-      accepts?: PaymentRequirements[];
-      [key: string]: unknown;
-    };
-    const baseAccept = paymentRequired.accepts?.find((a) => a.network === 'base');
-    if (!baseAccept) {
-      throw new Error('x402: no Base network payment option found');
-    }
+    const paymentPayload = await this.getHttpClient().createPaymentPayload(
+      paymentRequired,
+    );
 
-    const signer = this.executorService.getAccount();
-    const paymentHeader = await createPaymentHeader(signer, 2, baseAccept as never);
+    const paymentHeaders = this.getHttpClient().encodePaymentSignatureHeader(
+      paymentPayload,
+    );
 
     const res2 = await fetch(url, {
       ...options,
       headers: {
         ...(options?.headers ?? {}),
-        'X-402-Payment': paymentHeader,
+        ...paymentHeaders,
       },
     });
+
     if (!res2.ok) {
       const body = await res2.text().catch(() => '');
-      this.logger.error(`x402 payment failed: ${res2.status} ${body}`);
+      const settle = this.getHttpClient().getPaymentSettleResponse(
+        (name) => res2.headers.get(name),
+      );
+      this.logger.error(
+        `x402 payment failed: ${res2.status} body=${body} settle=${JSON.stringify(settle)}`,
+      );
       throw new Error(`x402: payment failed with status ${res2.status}`);
     }
-    return (await res2.json()) as T;
+
+    // Process payment result (triggers hooks, checks settlement)
+    const result = await this.getHttpClient().processResponse(res2);
+    if (result.kind === 'settle_failed') {
+      this.logger.warn('x402 payment succeeded but settlement had issues');
+      return result.body as T;
+    }
+    if (result.kind === 'error') {
+      throw new Error(`x402: unexpected error after payment`);
+    }
+    if (result.kind === 'success' || result.kind === 'passthrough') {
+      return result.body as T;
+    }
+
+    throw new Error('x402: server still requires payment after sending header');
   }
 }

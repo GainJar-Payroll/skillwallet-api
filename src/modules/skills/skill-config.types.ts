@@ -1,10 +1,38 @@
+import { Skill } from './schemas/skill.schema';
+
 export type SkillRunType = 'cron' | 'event-trigger';
+
+export const SkillRunEnum = ['cron', 'event-trigger'] as const;
 
 export interface CronSkillTriggerConfig {
   type: 'cron';
   cronExpression: string;
   timezone?: string;
 }
+
+export interface EventSkillTriggerConfig {
+  type: 'event-trigger';
+  chainId?: number;
+  contractAddress: string;
+  eventSignature: string;
+  filterArgs?: Record<string, SkillEventFilterValue>;
+  confirmations?: number;
+  dedupeKey?: 'txHash-logIndex';
+}
+
+export type SkillTriggerConfig = CronSkillTriggerConfig | EventSkillTriggerConfig;
+
+export type CronSkill = Skill & {
+  runType: 'cron';
+  trigger: CronSkillTriggerConfig;
+};
+
+export type EventTriggerSkill = Skill & {
+  runType: 'event-trigger';
+  trigger: EventSkillTriggerConfig;
+};
+
+export type SkillEntity = CronSkill | EventTriggerSkill;
 
 export type InstallationTriggerFilterSource = {
   source: 'installation';
@@ -21,39 +49,6 @@ export type SkillEventFilterValue =
   | InstallationTriggerFilterSource
   | ParameterTriggerFilterSource;
 
-export interface EventSkillTriggerConfig {
-  type: 'event-trigger';
-  chainId?: number;
-  contractAddress: string;
-  eventSignature: string;
-  filterArgs?: Record<string, SkillEventFilterValue>;
-  confirmations?: number;
-  dedupeKey?: 'txHash-logIndex';
-}
-
-export type SkillTriggerConfig = CronSkillTriggerConfig | EventSkillTriggerConfig;
-
-export interface DcaUniswapV3ExecutionConfig {
-  kind: 'dca-uniswap-v3';
-  tokenIn?: string;
-  router?: string;
-  defaultFeeTier?: number;
-  [key: string]: unknown;
-}
-
-export interface ContractCallExecutionConfig {
-  kind: 'contract-call';
-  target?: string;
-  functionName?: string;
-  args?: unknown[];
-  [key: string]: unknown;
-}
-
-export type SkillExecutionConfig =
-  | DcaUniswapV3ExecutionConfig
-  | ContractCallExecutionConfig
-  | ({ kind: string } & Record<string, unknown>);
-
 export interface SkillDailySpendLimitConfig {
   tokenAddress?: string;
   maxAmount?: string;
@@ -68,7 +63,28 @@ export interface SkillLimitsConfig {
   [key: string]: unknown;
 }
 
-export interface SkillHistoryConfig {
-  maxEntries?: number;
-  [key: string]: unknown;
+export interface X402ServiceConfig {
+  key: string;
+  endpoint: string;
+  method?: 'GET' | 'POST';
+  /** Where to store result in execution context: "newsContext", "marketData" */
+  output: string;
+  required?: boolean;
+}
+
+export interface AISkillConfig {
+  provider: 'venice';
+  model?: string;
+  /** System prompt template. Can include {{newsContext}}, {{params}}, {{history}} placeholders */
+  promptTemplate: string;
+  /** Map of input source keys → where they appear in the prompt */
+  inputSources: {
+    /** Keys from x402Services[].output to inject into prompt context */
+    fromX402: string[];
+    /** Whether to include installation parameters */
+    includeParams: boolean;
+    /** Whether to include recent execution history (last 5) */
+    includeHistory: boolean;
+  };
+  maxTokens?: number;
 }

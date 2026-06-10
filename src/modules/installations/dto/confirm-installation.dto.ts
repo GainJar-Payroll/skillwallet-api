@@ -1,11 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Matches } from 'class-validator';
 import type { SkillParameterInputPayload } from '../../skills/skill-parameter.types';
+import { IsEvmAddress } from 'src/common/validator/is-evm-address';
 
 export class ConfirmInstallationDto {
   @ApiProperty({
     description: 'Public skillId of the skill being installed',
-    example: 'generic-dca-84532',
+    example: 'custom-cron-dca-84532',
   })
   @IsString()
   @IsNotEmpty()
@@ -15,10 +16,7 @@ export class ConfirmInstallationDto {
     description: 'EOA address of the user installing the skill',
     example: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
   })
-  @IsString()
-  @Matches(/^0x[a-fA-F0-9]{40}$/, {
-    message: 'userAddress must be a valid 0x address',
-  })
+  @IsEvmAddress()
   userAddress!: string;
 
   @ApiProperty({
@@ -26,10 +24,7 @@ export class ConfirmInstallationDto {
       'MetaMask Hybrid Smart Account address. signedDelegation.delegator must match this.',
     example: '0x1234567890123456789012345678901234567890',
   })
-  @IsString()
-  @Matches(/^0x[a-fA-F0-9]{40}$/, {
-    message: 'smartAccountAddress must be a valid 0x address',
-  })
+  @IsEvmAddress()
   smartAccountAddress!: string;
 
   @ApiPropertyOptional({
@@ -62,5 +57,5 @@ export class ConfirmInstallationDto {
     additionalProperties: true,
   })
   @IsOptional()
-  parameters?: SkillParameterInputPayload;
+  parameters!: SkillParameterInputPayload;
 }

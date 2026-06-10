@@ -17,9 +17,10 @@
  * failure rather than a 400 from the backend.
  */
 
+import { parseExpression } from 'cron-parser';
 import { getAddress, type Address } from 'viem';
 
-export type SkillParameterType = 'select' | 'number' | 'boolean' | 'string' | 'address';
+export type SkillParameterType = 'select' | 'number' | 'boolean' | 'string' | 'address' | 'cron';
 
 export interface SkillParameterBase {
   key: string;
@@ -337,6 +338,20 @@ function validateOne(
           key,
         );
       }
+    }
+    case 'cron': {
+      if (typeof rawValue !== 'string') {
+        throw new ProofParameterError(`Skill parameter ${key} must be a cron expression string`, key);
+      }
+      try {
+        parseExpression(rawValue);
+      } catch (err) {
+        throw new ProofParameterError(
+          `Skill parameter ${key} is not a valid cron expression: ${rawValue}`,
+          key,
+        );
+      }
+      return rawValue;
     }
     default: {
       const neverDef: never = def;

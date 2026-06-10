@@ -5,7 +5,6 @@ import { getAddress } from 'viem';
 import { Skill, SkillDocument } from './schemas/skill.schema';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
-import { normalizeSkillConfig, normalizeSkillTrigger } from './skill-config.util';
 import { Installation, InstallationDocument } from '../installations/schemas/installation.schema';
 
 export interface FindSkillsOptions {
@@ -74,10 +73,8 @@ export class SkillsService {
   }
 
   async create(dto: CreateSkillDto): Promise<Skill> {
-    this.validateRunType(dto);
-
     const created = await this.skillModel.create({
-      ...this.buildPersistencePayload(dto),
+      ...dto,
       isActive: dto.isActive ?? true,
     });
 
@@ -94,23 +91,16 @@ export class SkillsService {
       description: dto.description ?? existing.description,
       iconUrl: dto.iconUrl ?? existing.iconUrl,
       runType: dto.runType ?? existing.runType,
-      cronExpression: dto.cronExpression ?? existing.cronExpression,
-      eventTriggerConfig: (dto.eventTriggerConfig ?? existing.eventTriggerConfig) as
-        | Record<string, unknown>
-        | undefined,
       trigger: dto.trigger ?? existing.trigger,
-      execution: dto.execution ?? existing.execution,
       chainId: dto.chainId ?? existing.chainId,
-      delegationScope: (dto.delegationScope as Record<string, unknown>) ?? existing.delegationScope,
+      delegationScope: dto.delegationScope ?? existing.delegationScope,
       parameters: dto.parameters ?? existing.parameters,
       limits: dto.limits ?? existing.limits,
       metadata: dto.metadata ?? existing.metadata,
       isActive: dto.isActive ?? existing.isActive,
     };
 
-    this.validateRunType(merged);
-
-    Object.assign(existing, this.buildPersistencePayload(merged));
+    Object.assign(existing, merged);
     await existing.save();
 
     return existing.toObject();
@@ -125,13 +115,10 @@ export class SkillsService {
   }
 
   async upsertByName(name: string, payload: CreateSkillDto): Promise<Skill> {
-    this.validateRunType(payload);
-    const normalizedPayload = this.buildPersistencePayload(payload);
-
     const updated = await this.skillModel
       .findOneAndUpdate(
         { name, chainId: payload.chainId },
-        { $set: { ...normalizedPayload, isActive: payload.isActive ?? true } },
+        { $set: { ...payload, isActive: payload.isActive ?? true } },
         { new: true, upsert: true },
       )
       .exec();
@@ -199,28 +186,5 @@ export class SkillsService {
       ...skill,
       installation: latestBySkillId.get(skill.skillId),
     }));
-  }
-
-  private validateRunType(dto: CreateSkillDto): void {
-    const trigger = normalizeSkillTrigger(dto);
-
-    if (dto.runType === 'cron' && (!trigger || trigger.type !== 'cron')) {
-      throw new BadRequestException('cronExpression is required for runType "cron"');
-    }
-
-    if (dto.runType === 'event-trigger' && (!trigger || trigger.type !== 'event-trigger')) {
-      throw new BadRequestException('eventTriggerConfig is required for runType "event-trigger"');
-    }
-  }
-
-  private buildPersistencePayload(dto: CreateSkillDto): CreateSkillDto {
-    const normalized = normalizeSkillConfig(dto);
-
-    return {
-      ...dto,
-      trigger: normalized.trigger,
-      execution: normalized.execution,
-      limits: normalized.limits,
-    };
   }
 }
