@@ -44,7 +44,7 @@ async function bootstrap(): Promise<void> {
     .setTitle('SkillWallet Backend API')
     .setDescription(
       'REST surface for the SkillWallet marketplace. Skills are published server-side; ' +
-        'EVM wallets sign delegations through the MetaMask Smart Accounts Kit and submit ' +
+        'EVM wallets sign delegations via ERC-4337 delegation and submit ' +
         'them to /installations. The runner executes each skill via the configured relayer.',
     )
     .setVersion('0.1.0')

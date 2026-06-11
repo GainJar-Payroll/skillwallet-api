@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/gainjar-payroll/mbg-api:latest
+    image: ghcr.io/gainjar-payroll/skillwallet-api:latest
     ports:
       - "4000:4000"
     env_file:

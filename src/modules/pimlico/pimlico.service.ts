@@ -69,9 +69,17 @@ export interface PimlicoSupportedEntryPoints {
   entryPoints: `0x${string}`[];
 }
 
+export interface PimlicoChainConfig {
+  paymasterUrl: string;
+  bundlerUrl: string;
+  sponsorshipPolicy: string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+const DEFAULT_CHAIN_ID = 84532;
 
 const ENTRY_POINT_V07 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as `0x${string}`;
 
@@ -82,14 +90,13 @@ const ENTRY_POINT_V07 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as `0x${str
 @Injectable()
 export class PimlicoService {
   private readonly logger = new Logger(PimlicoService.name);
-  private readonly paymasterUrl: string;
-  private readonly bundlerUrl: string;
-  private readonly sponsorshipPolicy: string;
+  private readonly chains: Map<number, PimlicoChainConfig>;
 
   constructor(private readonly config: ConfigService) {
-    this.paymasterUrl = this.config.get<string>('pimlico.paymasterUrl')!;
-    this.bundlerUrl = this.config.get<string>('pimlico.bundlerUrl')!;
-    this.sponsorshipPolicy = this.config.get<string>('pimlico.sponsorshipPolicy') ?? '';
+    const chainsConfig = this.config.get<Record<string, PimlicoChainConfig>>('pimlico.chains')!;
+    this.chains = new Map(
+      Object.entries(chainsConfig).map(([chainId, cfg]) => [Number(chainId), cfg]),
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -104,7 +111,9 @@ export class PimlicoService {
     userOp: Partial<PimlicoUserOperation>,
     entryPoint: `0x${string}` = ENTRY_POINT_V07,
     policyId?: string,
+    chainId = DEFAULT_CHAIN_ID,
   ): Promise<PimlicoPaymasterStubData> {
+    const config = this.getChainConfig(chainId);
     const params: Record<string, unknown> = {
       entryPoint,
       userOperation: this.sanitizeUserOp(userOp),
@@ -112,7 +121,7 @@ export class PimlicoService {
     if (policyId) {
       params.sponsorshipPolicyId = policyId;
     }
-    return this.paymasterRpc<PimlicoPaymasterStubData>('pm_getPaymasterStubData', [params]);
+    return this.paymasterRpc<PimlicoPaymasterStubData>(config.paymasterUrl, 'pm_getPaymasterStubData', [params]);
   }
 
   /**
@@ -123,7 +132,9 @@ export class PimlicoService {
     userOp: Partial<PimlicoUserOperation>,
     entryPoint: `0x${string}` = ENTRY_POINT_V07,
     policyId?: string,
+    chainId = DEFAULT_CHAIN_ID,
   ): Promise<PimlicoPaymasterData> {
+    const config = this.getChainConfig(chainId);
     const params: Record<string, unknown> = {
       entryPoint,
       userOperation: this.sanitizeUserOp(userOp),
@@ -131,7 +142,7 @@ export class PimlicoService {
     if (policyId) {
       params.sponsorshipPolicyId = policyId;
     }
-    return this.paymasterRpc<PimlicoPaymasterData>('pm_getPaymasterData', [params]);
+    return this.paymasterRpc<PimlicoPaymasterData>(config.paymasterUrl, 'pm_getPaymasterData', [params]);
   }
 
   // -----------------------------------------------------------------------
@@ -144,8 +155,10 @@ export class PimlicoService {
   async estimateUserOperationGas(
     userOp: Partial<PimlicoUserOperation>,
     entryPoint: `0x${string}` = ENTRY_POINT_V07,
+    chainId = DEFAULT_CHAIN_ID,
   ): Promise<PimlicoGasEstimate> {
-    return this.bundlerRpc<PimlicoGasEstimate>('eth_estimateUserOperationGas', [
+    const config = this.getChainConfig(chainId);
+    return this.bundlerRpc<PimlicoGasEstimate>(config.bundlerUrl, 'eth_estimateUserOperationGas', [
       this.sanitizeUserOp(userOp),
       entryPoint,
     ]);
@@ -158,8 +171,10 @@ export class PimlicoService {
   async sendUserOperation(
     userOp: PimlicoUserOperation,
     entryPoint: `0x${string}` = ENTRY_POINT_V07,
+    chainId = DEFAULT_CHAIN_ID,
   ): Promise<`0x${string}`> {
-    return this.bundlerRpc<`0x${string}`>('eth_sendUserOperation', [
+    const config = this.getChainConfig(chainId);
+    return this.bundlerRpc<`0x${string}`>(config.bundlerUrl, 'eth_sendUserOperation', [
       userOp,
       entryPoint,
     ]);
@@ -171,9 +186,12 @@ export class PimlicoService {
    */
   async getUserOperationReceipt(
     userOpHash: `0x${string}`,
+    chainId = DEFAULT_CHAIN_ID,
   ): Promise<PimlicoUserOperationReceipt | null> {
+    const config = this.getChainConfig(chainId);
     try {
       return await this.bundlerRpc<PimlicoUserOperationReceipt>(
+        config.bundlerUrl,
         'eth_getUserOperationReceipt',
         [userOpHash],
       );
@@ -186,8 +204,10 @@ export class PimlicoService {
   /**
    * Get supported entry points.
    */
-  async getSupportedEntryPoints(): Promise<`0x${string}`[]> {
+  async getSupportedEntryPoints(chainId = DEFAULT_CHAIN_ID): Promise<`0x${string}`[]> {
+    const config = this.getChainConfig(chainId);
     const result = await this.bundlerRpc<{ entryPoints: `0x${string}`[] }>(
+      config.bundlerUrl,
       'eth_supportedEntryPoints',
       [],
     );
@@ -207,6 +227,7 @@ export class PimlicoService {
     initCode: `0x${string}`;
     callData: `0x${string}`;
     entryPoint?: `0x${string}`;
+    chainId?: number;
   }): Promise<{
     nonce: string;
     callGasLimit: string;
@@ -218,6 +239,8 @@ export class PimlicoService {
     paymasterPostOpGasLimit: string;
   }> {
     const entryPoint = params.entryPoint ?? ENTRY_POINT_V07;
+    const chainId = params.chainId ?? DEFAULT_CHAIN_ID;
+    const config = this.getChainConfig(chainId);
 
     // Split initCode into factory (20 bytes) + factoryData (rest) for v0.7
     const factory = params.initCode.slice(0, 42) as `0x${string}`;
@@ -236,13 +259,13 @@ export class PimlicoService {
     // Get paymaster stub data
     let paymasterStub: PimlicoPaymasterStubData;
     try {
-      paymasterStub = await this.getPaymasterStubData(baseUserOp, entryPoint, this.sponsorshipPolicy);
+      paymasterStub = await this.getPaymasterStubData(baseUserOp, entryPoint, config.sponsorshipPolicy, chainId);
     } catch (err) {
       this.logger.warn(`Paymaster stub failed: ${(err as Error).message}`);
       paymasterStub = { paymaster: null as any, paymasterData: null as any, paymasterVerificationGasLimit: '0x0', paymasterPostOpGasLimit: '0x0' };
     }
 
-    const gasEstimate = await this.estimateUserOperationGas(baseUserOp, entryPoint);
+    const gasEstimate = await this.estimateUserOperationGas(baseUserOp, entryPoint, chainId);
 
     const pmUserOp: Partial<PimlicoUserOperation> = {
       ...baseUserOp,
@@ -257,7 +280,7 @@ export class PimlicoService {
 
     let paymasterData: PimlicoPaymasterData;
     try {
-      paymasterData = await this.getPaymasterData(pmUserOp, entryPoint, this.sponsorshipPolicy);
+      paymasterData = await this.getPaymasterData(pmUserOp, entryPoint, config.sponsorshipPolicy, chainId);
     } catch (err) {
       this.logger.warn(`Paymaster data failed: ${(err as Error).message}`);
       paymasterData = { paymaster: null as any, paymasterData: null as any, paymasterVerificationGasLimit: '0x0', paymasterPostOpGasLimit: '0x0' };
@@ -282,8 +305,9 @@ export class PimlicoService {
   async submitUserOp(
     userOp: PimlicoUserOperation,
     entryPoint: `0x${string}` = ENTRY_POINT_V07,
+    chainId = DEFAULT_CHAIN_ID,
   ): Promise<`0x${string}`> {
-    return this.sendUserOperation(userOp, entryPoint);
+    return this.sendUserOperation(userOp, entryPoint, chainId);
   }
 
   /**
@@ -294,11 +318,12 @@ export class PimlicoService {
     userOpHash: `0x${string}`,
     timeoutMs = 120_000,
     intervalMs = 3_000,
+    chainId = DEFAULT_CHAIN_ID,
   ): Promise<PimlicoUserOperationReceipt> {
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
-      const receipt = await this.getUserOperationReceipt(userOpHash);
+      const receipt = await this.getUserOperationReceipt(userOpHash, chainId);
       if (receipt) {
         this.logger.log(`UserOperation confirmed hash=${receipt.receipt.transactionHash}`);
         return receipt;
@@ -313,12 +338,22 @@ export class PimlicoService {
   // Private — RPC calls
   // -----------------------------------------------------------------------
 
-  private async paymasterRpc<T>(method: string, params: unknown[]): Promise<T> {
-    return this.rpc<T>(this.paymasterUrl, method, params);
+  private getChainConfig(chainId: number): PimlicoChainConfig {
+    const config = this.chains.get(chainId);
+    if (!config) {
+      throw new Error(
+        `Pimlico not configured for chain ${chainId}. Set PIMLICO_URL_* env var.`,
+      );
+    }
+    return config;
   }
 
-  private async bundlerRpc<T>(method: string, params: unknown[]): Promise<T> {
-    return this.rpc<T>(this.bundlerUrl, method, params);
+  private async paymasterRpc<T>(url: string, method: string, params: unknown[]): Promise<T> {
+    return this.rpc<T>(url, method, params);
+  }
+
+  private async bundlerRpc<T>(url: string, method: string, params: unknown[]): Promise<T> {
+    return this.rpc<T>(url, method, params);
   }
 
   private async rpc<T>(url: string, method: string, params: unknown[]): Promise<T> {

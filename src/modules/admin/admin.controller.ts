@@ -508,6 +508,11 @@ export class AdminController {
 
     try {
       await this.runnerService.executeInstallation(id, { aiContext, newsContext });
+      // Advance nextExecutionAt to prevent immediate cron re-execution
+      await this.installationsService.updateNextExecution(
+        id,
+        new Date(Date.now() + 5 * 60 * 1000),
+      );
     } catch (err) {
       this.logger.error(`Manual trigger failed for ${id}: ${(err as Error).message}`);
       throw new BadRequestException((err as Error).message);

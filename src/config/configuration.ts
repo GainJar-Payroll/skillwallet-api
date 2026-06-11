@@ -13,6 +13,7 @@ export const validationSchema = Joi.object({
   BASE_MAINNET_RPC_URL: Joi.string().uri().required(),
   DEFAULT_CHAIN_ID: Joi.number().valid(84532, 8453).default(84532),
   ONESHOT_RELAYER_URL: Joi.string().uri().required(),
+  ONESHOT_RELAYER_URL_MAINNET: Joi.string().uri().optional(),
   ONESHOT_POLL_INTERVAL_MS: Joi.number().integer().positive().optional(),
   ONESHOT_POLL_TIMEOUT_MS: Joi.number().integer().positive().optional(),
   VENICE_API_BASE: Joi.string().uri().default('https://api.venice.ai/api/v1'),
@@ -27,6 +28,11 @@ export const validationSchema = Joi.object({
   STATELESS_DELEGATOR_IMPL_ADDRESS: Joi.string()
     .pattern(/^0x[0-9a-fA-F]{40}$/)
     .optional(),
+  PIMLICO_URL_BASE_SEPOLIA: Joi.string().uri().optional(),
+  PIMLICO_URL_BASE_MAINNET: Joi.string().uri().optional(),
+  PIMLICO_POLICY_BASE_SEPOLIA: Joi.string().optional(),
+  PIMLICO_POLICY_BASE_MAINNET: Joi.string().optional(),
+  // Legacy env vars (still supported as fallback)
   PAYMASTER_URL: Joi.string().uri().optional(),
   BUNDLER_URL: Joi.string().uri().optional(),
   SPONSORSHIP_POLICY: Joi.string().optional(),
@@ -54,6 +60,7 @@ export default () => ({
   },
   defaultChainId: parseInt(process.env.DEFAULT_CHAIN_ID!, 10) || 84532,
   oneShotRelayerUrl: process.env.ONESHOT_RELAYER_URL!,
+  oneShotRelayerUrlMainnet: process.env.ONESHOT_RELAYER_URL_MAINNET || '',
   oneShotPollIntervalMs: process.env.ONESHOT_POLL_INTERVAL_MS
     ? parseInt(process.env.ONESHOT_POLL_INTERVAL_MS, 10)
     : undefined,
@@ -69,9 +76,31 @@ export default () => ({
   runnerEnabled: process.env.RUNNER_ENABLED !== 'false',
   cronInterval: process.env.CRON_INTERVAL ?? '*/5 * * * *',
   pimlico: {
-    paymasterUrl: process.env.PAYMASTER_URL || '',
-    bundlerUrl: process.env.BUNDLER_URL || process.env.PAYMASTER_URL || '',
-    sponsorshipPolicy: process.env.SPONSORSHIP_POLICY || '',
+    chains: {
+      [84532]: {
+        paymasterUrl:
+          process.env.PIMLICO_URL_BASE_SEPOLIA ||
+          process.env.PAYMASTER_URL ||
+          '',
+        bundlerUrl:
+          process.env.PIMLICO_URL_BASE_SEPOLIA ||
+          process.env.BUNDLER_URL ||
+          process.env.PAYMASTER_URL ||
+          '',
+        sponsorshipPolicy:
+          process.env.PIMLICO_POLICY_BASE_SEPOLIA ||
+          process.env.SPONSORSHIP_POLICY ||
+          '',
+      },
+      [8453]: {
+        paymasterUrl: process.env.PIMLICO_URL_BASE_MAINNET || '',
+        bundlerUrl: process.env.PIMLICO_URL_BASE_MAINNET || '',
+        sponsorshipPolicy:
+          process.env.PIMLICO_POLICY_BASE_MAINNET ||
+          process.env.SPONSORSHIP_POLICY ||
+          '',
+      },
+    },
     execKey: process.env.PIMLICO_EXEC_KEY || '',
   },
 });
