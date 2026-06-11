@@ -117,6 +117,11 @@ export class CronRunnerService {
         this.logger.error(
           `Execution failed for installation ${inst._id.toString()}: ${(err as Error).message}`,
         );
+        // Advance to prevent infinite retry — retry in 5 min
+        await this.installationsService.updateNextExecution(
+          inst._id.toString(),
+          new Date(Date.now() + 5 * 60 * 1000),
+        );
       }
     }
   }

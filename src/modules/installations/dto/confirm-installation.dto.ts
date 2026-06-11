@@ -21,7 +21,7 @@ export class ConfirmInstallationDto {
 
   @ApiProperty({
     description:
-      'MetaMask Hybrid Smart Account address. signedDelegation.delegator must match this.',
+      'Hybrid Smart Account address. signedDelegation.delegator must match this.',
     example: '0x1234567890123456789012345678901234567890',
   })
   @IsEvmAddress()
@@ -37,7 +37,7 @@ export class ConfirmInstallationDto {
 
   @ApiProperty({
     description:
-      'Signed delegation object as produced by MetaMask Smart Accounts Kit signDelegation',
+      'Signed delegation object as produced by ERC-4337 delegation framework',
     type: 'object',
     additionalProperties: true,
   })

@@ -7,12 +7,16 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { IsOptional, IsString } from 'class-validator';
+import { IsNumber, IsOptional, IsString } from 'class-validator';
 import { ApiOkResponse, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { PimlicoService } from './pimlico.service';
 import { PimlicoApiKeyGuard } from './pimlico-api-key.guard';
 
 class SendUserOperationDto {
+  @IsNumber()
+  @IsOptional()
+  chainId?: number;
+
   @IsString()
   sender!: string;
 
@@ -24,6 +28,10 @@ class SendUserOperationDto {
 }
 
 class SubmitUserOpDto {
+  @IsNumber()
+  @IsOptional()
+  chainId?: number;
+
   @IsString()
   sender!: string;
 
@@ -128,6 +136,7 @@ export class PimlicoController {
       sender: dto.sender as `0x${string}`,
       initCode: dto.initCode as `0x${string}`,
       callData: dto.callData as `0x${string}`,
+      chainId: dto.chainId,
     });
   }
 
@@ -171,6 +180,7 @@ export class PimlicoController {
     const userOpHash = await this.pimlicoService.submitUserOp(
       userOp,
       (entryPoint ?? undefined) as `0x${string}` | undefined,
+      dto.chainId,
     );
 
     return { userOpHash };
@@ -182,9 +192,13 @@ export class PimlicoController {
   @ApiSecurity('pimlico-api-key')
   @ApiOperation({ summary: 'Get UserOperation receipt by hash' })
   @ApiOkResponse({ type: UserOperationReceiptResult })
-  async getReceipt(@Body('userOpHash') userOpHash: string) {
+  async getReceipt(
+    @Body('userOpHash') userOpHash: string,
+    @Body('chainId') chainId?: number,
+  ) {
     const receipt = await this.pimlicoService.getUserOperationReceipt(
       userOpHash as `0x${string}`,
+      chainId,
     );
 
     if (!receipt) {
@@ -211,10 +225,13 @@ export class PimlicoController {
   async pollReceipt(
     @Body('userOpHash') userOpHash: string,
     @Body('timeoutMs') timeoutMs?: number,
+    @Body('chainId') chainId?: number,
   ) {
     const receipt = await this.pimlicoService.pollForReceipt(
       userOpHash as `0x${string}`,
       timeoutMs ?? 120_000,
+      3_000,
+      chainId,
     );
 
     return {

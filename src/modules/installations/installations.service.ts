@@ -17,7 +17,9 @@ import { SkillsService } from '../skills/skills.service';
 import { DelegationService } from '../delegation/delegation.service';
 import { type PrepareInstallationDto } from './dto/prepare-installation.dto';
 import { type ConfirmInstallationDto } from './dto/confirm-installation.dto';
+import { parseExpression } from 'cron-parser';
 import { validateSkillParameters } from '../skills/skill-parameter-validation';
+import { CronSkillTriggerConfig } from '../skills/skill-config.types';
 import { getExplorerTxUrl } from '../../config/chains.config';
 
 export interface PrepareInstallationResponse {
@@ -148,6 +150,17 @@ export class InstallationsService {
       status: 'active',
     });
 
+    // Set initial nextExecutionAt for cron installations so findDueForExecution
+    // picks them up. Event-trigger installations don't need this field.
+    if (skill.trigger?.type === 'cron') {
+      const cronExpr =
+        ((validatedParameters as Record<string, unknown>)?.cronSchedule as string | undefined) ??
+        (skill.trigger as CronSkillTriggerConfig).cronExpression;
+      const parser = parseExpression(cronExpr, { currentDate: new Date() });
+      const nextAt = parser.next().toDate();
+      await this.updateNextExecution(created._id.toString(), nextAt);
+    }
+
     return created.toObject();
   }
 
@@ -197,7 +210,20 @@ export class InstallationsService {
   }
 
   async resume(id: string, userAddress: string): Promise<Installation> {
-    return this.setStatus(id, userAddress, 'active');
+    const installation = await this.setStatus(id, userAddress, 'active');
+
+    // Recalculate nextExecutionAt for cron installations after resume
+    // (old value may be hours/days in the past).
+    // setStatus returns a lean doc — skillId is a raw ObjectId, not populated.
+    const skill = await this.skillsService.findById(String(installation.skillId));
+    if (skill.trigger?.type === 'cron') {
+      const cronExpr = (skill.trigger as CronSkillTriggerConfig).cronExpression;
+      const parser = parseExpression(cronExpr, { currentDate: new Date() });
+      const nextAt = parser.next().toDate();
+      await this.updateNextExecution(id, nextAt);
+    }
+
+    return installation;
   }
 
   async revoke(id: string, userAddress: string): Promise<void> {
@@ -243,11 +269,7 @@ export class InstallationsService {
     return this.installationModel
       .find({
         status: 'active',
-        $or: [
-          { nextExecutionAt: { $lte: now } },
-          { nextExecutionAt: { $exists: false } },
-          { nextExecutionAt: null },
-        ],
+        nextExecutionAt: { $exists: true, $ne: null, $lte: now },
       })
       .populate(this.skillPopulate)
       .lean()

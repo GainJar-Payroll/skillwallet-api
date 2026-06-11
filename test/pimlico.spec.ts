@@ -7,6 +7,7 @@ describe('PimlicoService', () => {
   let fetchSpy: jest.SpyInstance;
 
   const PAYMASTER_URL = 'https://api.pimlico.io/v2/base-sepolia/rpc?apikey=test';
+  const PAYMASTER_URL_MAINNET = 'https://api.pimlico.io/v2/base/rpc?apikey=test';
   const ENTRY_POINT = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
 
   beforeEach(async () => {
@@ -18,9 +19,18 @@ describe('PimlicoService', () => {
           useValue: {
             get: jest.fn((key: string) => {
               const config: Record<string, unknown> = {
-                'pimlico.paymasterUrl': PAYMASTER_URL,
-                'pimlico.bundlerUrl': PAYMASTER_URL,
-                'pimlico.sponsorshipPolicy': 'pol_test',
+                'pimlico.chains': {
+                  '84532': {
+                    paymasterUrl: PAYMASTER_URL,
+                    bundlerUrl: PAYMASTER_URL,
+                    sponsorshipPolicy: 'pol_test',
+                  },
+                  '8453': {
+                    paymasterUrl: PAYMASTER_URL_MAINNET,
+                    bundlerUrl: PAYMASTER_URL_MAINNET,
+                    sponsorshipPolicy: 'pol_mainnet',
+                  },
+                },
                 'pimlico.execKey': 'test-key',
               };
               return config[key];
@@ -174,7 +184,7 @@ describe('PimlicoService', () => {
   });
 
   describe('deployAndExecute', () => {
-    it('completes full flow (stub → estimate → paymaster → send)', async () => {
+    it('completes Phase 1 (stub → estimate → paymaster) — returns gas estimates', async () => {
       const stubResult = {
         paymaster: ('0x' + '11'.repeat(20)) as `0x${string}`,
         paymasterData: ('0x' + '22'.repeat(32)) as `0x${string}`,
@@ -192,31 +202,36 @@ describe('PimlicoService', () => {
         paymasterVerificationGasLimit: '0x100',
         paymasterPostOpGasLimit: '0x200',
       };
-      const sendResult = '0x' + '33'.repeat(32);
 
       fetchSpy = jest.spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ result: stubResult }) } as Response)
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ result: estimateResult }) } as Response)
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ result: paymasterResult }) } as Response)
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ result: sendResult }) } as Response);
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ result: paymasterResult }) } as Response);
 
-      const userOpHash = await service.deployAndExecute({
+      const result = await service.deployAndExecute({
         sender: '0x1234567890123456789012345678901234567890',
         initCode: ('0x' + 'aa'.repeat(20) + 'bb'.repeat(10)) as `0x${string}`,
         callData: '0x123456',
       });
 
-      expect(userOpHash).toBe(sendResult);
+      // Returned gas estimates, not a userOpHash
+      expect(typeof result).toBe('object');
+      expect(result).toHaveProperty('callGasLimit');
+      expect(result).toHaveProperty('verificationGasLimit');
+      expect(result).toHaveProperty('preVerificationGas');
+      expect(result.paymaster).toBe(paymasterResult.paymaster);
+      expect(result.paymasterData).toBe(paymasterResult.paymasterData);
 
-      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      // Exactly 3 RPC calls
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
       const calls = fetchSpy.mock.calls.map((c) => JSON.parse(c[1].body).method);
       expect(calls).toEqual([
         'pm_getPaymasterStubData',
         'eth_estimateUserOperationGas',
         'pm_getPaymasterData',
-        'eth_sendUserOperation',
       ]);
 
+      // Estimate call sends correctly split initCode
       const estimateBody = JSON.parse(fetchSpy.mock.calls[1][1].body);
       expect(estimateBody.params[0].sender).toBe('0x1234567890123456789012345678901234567890');
       expect(estimateBody.params[0].callData).toBe('0x123456');
@@ -224,13 +239,38 @@ describe('PimlicoService', () => {
       expect(estimateBody.params[0].factoryData).toBe('0x' + 'bb'.repeat(10));
       expect(estimateBody.params[0]).not.toHaveProperty('paymasterAndData');
       expect(estimateBody.params[1]).toBe(ENTRY_POINT);
+    });
+  });
 
-      const sendBody = JSON.parse(fetchSpy.mock.calls[3][1].body);
-      expect(sendBody.params[0].paymaster).toBe(paymasterResult.paymaster);
-      expect(sendBody.params[0].paymasterData).toBe(paymasterResult.paymasterData);
-      expect(sendBody.params[0].paymasterVerificationGasLimit).toBe(paymasterResult.paymasterVerificationGasLimit);
-      expect(sendBody.params[0].paymasterPostOpGasLimit).toBe(paymasterResult.paymasterPostOpGasLimit);
-      expect(sendBody.params[1]).toBe(ENTRY_POINT);
+  describe('multi-chain routing', () => {
+    it('routes request to mainnet URL when chainId=8453', async () => {
+      fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ result: { entryPoints: [ENTRY_POINT] } }),
+      } as Response);
+
+      await service.getSupportedEntryPoints(8453);
+
+      const calledUrl = fetchSpy.mock.calls[0][0] as string;
+      expect(calledUrl).toBe(PAYMASTER_URL_MAINNET);
+    });
+
+    it('routes request to sepolia URL by default (no chainId)', async () => {
+      fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ result: { entryPoints: [ENTRY_POINT] } }),
+      } as Response);
+
+      await service.getSupportedEntryPoints();
+
+      const calledUrl = fetchSpy.mock.calls[0][0] as string;
+      expect(calledUrl).toBe(PAYMASTER_URL);
+    });
+
+    it('throws for unconfigured chain', async () => {
+      await expect(
+        service.getSupportedEntryPoints(99999),
+      ).rejects.toThrow('Pimlico not configured for chain 99999');
     });
   });
 });

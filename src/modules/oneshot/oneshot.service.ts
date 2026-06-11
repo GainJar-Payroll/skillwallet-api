@@ -37,12 +37,14 @@ const DEFAULT_POLL_TIMEOUT_MS = 300_000;
 @Injectable()
 export class OneShotService {
   private readonly logger = new Logger(OneShotService.name);
-  private readonly relayerUrl: string;
+  private readonly relayerUrlTestnet: string;
+  private readonly relayerUrlMainnet: string;
   private readonly defaultPollIntervalMs: number;
   private readonly defaultPollTimeoutMs: number;
 
   constructor(private readonly config: ConfigService) {
-    this.relayerUrl = this.config.get<string>('oneShotRelayerUrl')!;
+    this.relayerUrlTestnet = this.config.get<string>('oneShotRelayerUrl')!;
+    this.relayerUrlMainnet = this.config.get<string>('oneShotRelayerUrlMainnet')!;
     this.defaultPollIntervalMs = this.toPositiveInt(
       this.config.get('oneShotPollIntervalMs'),
       DEFAULT_POLL_INTERVAL_MS,
@@ -54,7 +56,7 @@ export class OneShotService {
   }
 
   async getCapabilities(chainId: number): Promise<Record<string, unknown>> {
-    return this.rpc<Record<string, unknown>>('relayer_getCapabilities', [String(chainId)]);
+    return this.rpc<Record<string, unknown>>('relayer_getCapabilities', [String(chainId)], chainId);
   }
 
   async getFeeData(
@@ -64,13 +66,14 @@ export class OneShotService {
     return this.rpc<Record<string, unknown>>('relayer_getFeeData', {
       chainId: String(chainId),
       token,
-    });
+    }, Number(chainId));
   }
 
   async send7710Transaction(params: OneShotSendParams): Promise<`0x${string}`> {
     return this.rpc<`0x${string}`>(
       'relayer_send7710Transaction',
       OneShotService.toRelayerJson(params),
+      Number(params.chainId),
     );
   }
 
@@ -147,12 +150,19 @@ export class OneShotService {
   // Private
   // ---------------------------------------------------------------------------
 
-  private async rpc<T>(method: string, params: unknown): Promise<T> {
+  private getRelayerUrl(chainId: number): string {
+    if (chainId === 8453 && this.relayerUrlMainnet) return this.relayerUrlMainnet;
+    return this.relayerUrlTestnet;
+  }
+
+  private async rpc<T>(method: string, params: unknown, chainId?: number): Promise<T> {
     const body = { jsonrpc: '2.0' as const, id: 1, method, params };
 
     this.logger.debug(`RPC ${method}`);
 
-    const res = await fetch(this.relayerUrl, {
+    const url = chainId != null ? this.getRelayerUrl(chainId) : this.relayerUrlTestnet;
+
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

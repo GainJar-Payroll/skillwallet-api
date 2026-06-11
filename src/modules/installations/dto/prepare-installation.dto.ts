@@ -23,7 +23,7 @@ export class PrepareInstallationDto {
   userAddress!: `0x${string}`;
 
   @ApiProperty({
-    description: 'MetaMask Hybrid Smart Account address. This is the real delegation delegator.',
+    description: 'Hybrid Smart Account address. This is the real delegation delegator.',
     example: '0x1234567890123456789012345678901234567890',
   })
   @IsEvmAddress()
