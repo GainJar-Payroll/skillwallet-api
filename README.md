@@ -1,8 +1,8 @@
-# SkillWallet*
+# SkillWallet\*
 
 **Own an AI agent that pays its own gas, swaps its own tokens, and watches onchain events for you.**
 
-SkillWallet* is a backoffice API for **delegated, onchain automation**. A user signs a single MetaMask delegation. From that point on, an AI agent runs the user's strategy without ever holding the user's private key:
+SkillWallet\* is a backoffice API for **delegated, onchain automation**. A user signs a single MetaMask delegation. From that point on, an AI agent runs the user's strategy without ever holding the user's private key:
 
 - Reacts to onchain events (`Transfer`, `Sync`, anything) the moment they happen.
 - Pays gas via the 1Shot relayer (no user-side UserOp).
