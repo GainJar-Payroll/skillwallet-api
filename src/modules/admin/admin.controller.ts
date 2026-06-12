@@ -246,7 +246,7 @@ const VENICE_AI_DCA_TEMPLATE: CreateSkillDto = {
   aiConfig: {
     provider: 'venice',
     model: 'e2ee-gpt-oss-120b-p',
-    promptTemplate: 'You manage a DCA strategy. Skill parameters: outputToken={{params.outputToken}}, amountUsdc={{params.amountUsdc}} atams, schedule={{cronExpression}}. Installation: total invested so far, current balance. Market news: {{newsContext}}. Previous executions: {{history}}. Decide if this DCA run should execute now. Consider market sentiment and DCA principles. Respond in JSON: {"decision":"execute"|"skip","reason":"...","sentiment":"bullish"|"bearish"|"neutral"}',
+    promptTemplate: 'You manage a DCA strategy. Parameters: outputToken={{params.outputToken}}, amount={{amountUsdcHuman}} USDC ({{params.amountUsdc}} atoms). Schedule: {{cronExpression}}. Smart account USDC balance: {{usdcBalanceHuman}} USDC. Market news: {{newsContext}}. Recent executions: {{history}}. Decide if this DCA run should execute now. Consider market sentiment and DCA principles. Respond in JSON: {"decision":"execute"|"skip","reason":"...","sentiment":"bullish"|"bearish"|"neutral"}',
     inputSources: {
       fromX402: ['newsContext'],
       includeParams: true,

@@ -10,6 +10,8 @@ import { VeniceService } from '../venice/venice.service';
 import { Installation, ExecutionRecord } from '../installations/schemas/installation.schema';
 import { Skill } from '../skills/schemas/skill.schema';
 import { AISkillConfig, type CronSkillTriggerConfig } from '../skills/skill-config.types';
+import { getChainConfig } from '../../config/chains.config';
+import { createPublicClient, erc20Abi, http } from 'viem';
 
 type WithId<T> = T & { _id: { toString(): string } };
 
@@ -70,11 +72,12 @@ export class CronRunnerService {
 
         if (populatedSkill?.aiConfig) {
           try {
-            const prompt = this.buildAIPrompt(
+            const prompt = await this.buildAIPrompt(
               populatedSkill.aiConfig,
               inst.parameters,
               context,
               inst.executions ?? [],
+              inst as WithId<Installation>,
             );
             const aiOutput = await this.veniceService.decide(prompt);
             aiDecision = aiOutput;
@@ -126,13 +129,45 @@ export class CronRunnerService {
     }
   }
 
-  private buildAIPrompt(
+  private async buildAIPrompt(
     aiConfig: AISkillConfig,
     params: Record<string, unknown>,
     context: Record<string, string>,
     history: ExecutionRecord[],
-  ): string {
+    inst: WithId<Installation>,
+  ): Promise<string> {
     let prompt = aiConfig.promptTemplate;
+
+    // ── Enrich prompt with real USDC balance and human-readable amounts ──
+    const chainConfig = getChainConfig(inst.chainId);
+    const rpcUrls = this.config.get<Record<number, string>>('rpc');
+    const rpcUrl = rpcUrls?.[inst.chainId];
+
+    // Convert amount atoms to human-readable USDC
+    const rawAmount = String(params['amountUsdc'] ?? params['amountPerRun'] ?? '');
+    const amountNum = rawAmount ? Number(rawAmount) / 1_000_000 : 0;
+    const amountUsdcHuman = amountNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+
+    // Fetch USDC balance
+    let usdcBalanceHuman = 'unknown';
+    if (rpcUrl) {
+      try {
+        const client = createPublicClient({ transport: http(rpcUrl) });
+        const balance = await client.readContract({
+          address: chainConfig.tokens.usdc,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [inst.smartAccountAddress as `0x${string}`],
+        }) as bigint;
+        const balNum = Number(balance) / 1_000_000;
+        usdcBalanceHuman = balNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+      } catch (err) {
+        this.logger.warn(`Failed to fetch USDC balance for AI prompt: ${(err as Error).message}`);
+      }
+    }
+
+    // Resolve cron expression
+    const cronExpr = String(params['cronSchedule'] ?? 'unknown');
 
     if (aiConfig.inputSources.includeParams && params) {
       for (const [key, value] of Object.entries(params)) {
@@ -156,6 +191,10 @@ export class CronRunnerService {
     } else {
       prompt = prompt.replace('{{history}}', 'No previous executions');
     }
+
+    prompt = prompt.replace('{{amountUsdcHuman}}', amountUsdcHuman);
+    prompt = prompt.replace('{{usdcBalanceHuman}}', usdcBalanceHuman);
+    prompt = prompt.replace('{{cronExpression}}', cronExpr);
 
     return prompt;
   }
